@@ -1,3 +1,5 @@
+use macaddr::MacAddr6;
+
 use crate::core::*;
 use crate::format::*;
 
@@ -5,7 +7,7 @@ use std::collections::HashMap;
 
 pub struct L2 {
     ports: Vec<Device>,
-    mactbl: HashMap<u32, Mac>,
+    mactbl: HashMap<u32, MacAddr6>,
 }
 
 impl L2 {
@@ -31,10 +33,10 @@ impl L2 {
 
                 for (n_port, (n, recv)) in recvs.into_iter().enumerate() {
                     // println!("processing {:?}", recv);
-                    self.mactbl.insert(n as u32, recv.src.clone());
+                    self.mactbl.insert(n as u32, recv.header.src.clone());
 
                     // Macアドレステーブルに学習済みのポートが存在する場合、そのポートにのみフレームを流す
-                    if let Some(dstport) = self.mactbl.iter().find(|(_, mac)| **mac == recv.dst).map(|(n_port, _)| n_port) {
+                    if let Some(dstport) = self.mactbl.iter().find(|(_, mac)| **mac == recv.header.dst).map(|(n_port, _)| n_port) {
                         // println!("learned");
                         self.ports.get_mut(*dstport as usize).expect("l2 send failed: unreachable!").send(recv).await;
                     } else {

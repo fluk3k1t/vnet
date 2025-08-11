@@ -25,9 +25,9 @@ impl HasUuid for &Device {
 
 
 pub enum Command {
-    Send(Uuid, Packet),
-    Recv(Uuid, oneshot::Sender<Packet>),
-    RecvNonBlocking(Uuid, oneshot::Sender<Option<Packet>>),
+    Send(Uuid, EthernetFrame<Ipv4Packet<String>>),
+    Recv(Uuid, oneshot::Sender<EthernetFrame<Ipv4Packet<String>>>),
+    RecvNonBlocking(Uuid, oneshot::Sender<Option<EthernetFrame<Ipv4Packet<String>>>>),
 }
 
 pub struct World {
@@ -35,8 +35,8 @@ pub struct World {
     pub tx: Sender<Command>,
     rx: Receiver<Command>,
     next_uuid: Uuid,
-    pending: HashMap<Uuid, oneshot::Sender<Packet>>,
-    buffer: HashMap<Uuid, Vec<Packet>>,
+    pending: HashMap<Uuid, oneshot::Sender<EthernetFrame<Ipv4Packet<String>>>>,
+    buffer: HashMap<Uuid, Vec<EthernetFrame<Ipv4Packet<String>>>>,
     connections: HashMap<Uuid, Vec<Uuid>>,
 }
 
@@ -80,16 +80,16 @@ impl World {
     pub async fn run(mut self) {
         while let Some(com) = self.rx.recv().await {
             match com {
-                Command::Send(src, packet) => {
+                Command::Send(src, frame) => {
                     if let Some(dsts) = self.connections.get(&src) {
                         for dst in dsts {
                             if let Some(dst_sender) = self.pending.remove(dst) {
-                                dst_sender.send(packet.clone()).expect("Command Send failed");
+                                dst_sender.send(frame.clone()).expect("Command Send failed");
                             } else {
                                 if let Some(buffer) = self.buffer.get_mut(dst) {
-                                    buffer.push(packet.clone());
+                                    buffer.push(frame.clone());
                                 } else {
-                                    self.buffer.insert(*dst, vec![packet.clone()]);
+                                    self.buffer.insert(*dst, vec![frame.clone()]);
                                 }
                             }
                         }   
@@ -133,11 +133,11 @@ impl Device {
         }
     }
 
-    pub async fn send(&mut self, packet: Packet) {
-        self.tx.send(Command::Send(self.uuid, packet)).await.expect("command send failed");
+    pub async fn send(&mut self, frame: EthernetFrame<Ipv4Packet<String>>) {
+        self.tx.send(Command::Send(self.uuid, frame)).await.expect("command send failed");
     }
 
-    pub async fn recv(&mut self) -> Packet {
+    pub async fn recv(&mut self) -> EthernetFrame<Ipv4Packet<String>> {
         let (tx, rx) = oneshot::channel();
 
         self.tx.send(Command::Recv(self.uuid, tx)).await.expect("command recv failed"); 
@@ -146,7 +146,7 @@ impl Device {
     }
 
     // 表面的な挙動は同期的だがcoreにメッセージパッシングでコールするので非同期になっている
-    pub async fn recv_nonblocking(&mut self) -> Option<Packet> {
+    pub async fn recv_nonblocking(&mut self) -> Option<EthernetFrame<Ipv4Packet<String>>> {
         let (tx, rx) = oneshot::channel();
 
         self.tx.send(Command::RecvNonBlocking(self.uuid, tx)).await.expect("send command recv nonblocking failed");
