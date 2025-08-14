@@ -10,6 +10,7 @@ use tokio::sync::{oneshot, Mutex};
 use vnet::core::*;
 use vnet::format::*;
 use vnet::l2::*;
+use vnet::router::*;
 
 pub struct D {
     port: Device,
@@ -49,46 +50,16 @@ impl HasUuid for D {
 async fn main() {
     let mut world = World::new();
 
-    let mut l2 = L2::new(&mut world, 3);
+    let mut router = Router::new(&mut world)
+                        .eth(0, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00], [192, 168, 1, 254], [255, 255, 255, 0])
+                        .eth(1, [0x00, 0x00, 0x00, 0x00, 0x00, 0x01], [192, 168, 2, 254], [255, 255, 255, 0])
+                        .build();
 
-    let dev0_mac = MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
-    let dev1_mac = MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01);
-    let dev2_mac = MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x02);
+    let mut l2 = L2::new(&mut world, 1);
 
-    let dummy_ip = Ipv4Addr::new(0, 0, 0, 0);
-
-    let mut dev0 = D::new(&mut world, dev0_mac);
-    let mut dev1 = D::new(&mut world, dev1_mac);
-    let mut dev2 = D::new(&mut world, dev2_mac);
-
-    world.connect(l2.n_port(0).unwrap(), &dev0);
-    world.connect(l2.n_port(1).unwrap(), &dev1);
-    world.connect(l2.n_port(2).unwrap(), &dev2);
-
-    tokio::spawn(async move {
-        dev0.send(dev1_mac, Ipv4Packet::new(dummy_ip, dummy_ip, "from dev0".to_string())).await;
-        let frame = dev0.port.recv().await;
-        println!("dev0: received {:?}", frame);
-        // da.port.send(Frame::new(Mac::new("damac"), Mac::new("dbmac"), "i'm received")).await;
-        // da.port.send(Frame::new(Mac::new("damac"), Mac::new("dcmac"), "i'm received")).await;
+    tokio::spawn(async {
+        router.run();
     });
-
-    tokio::spawn(async move {
-        let frame = dev1.port.recv().await;
-        println!("dev1: received {:?}", frame);
-        dev1.send(dev0_mac, Ipv4Packet::new(dummy_ip, dummy_ip, "respond to dev0 from dev1".to_string())).await;
-        // db.port.send(Frame::new(Mac::new("dbmac"), Mac::new("damac"), "response")).await;
-        // println!("sended");
-        // let r = db.port.recv().await;
-        // println!("db: received {:?}", r);
-    });
-
-    tokio::spawn(async move {
-        let frame = dev2.port.recv().await;
-        println!("dev2: received {:?}", frame);
-    });
-
-    l2.run();
 
     world.run().await;
 }

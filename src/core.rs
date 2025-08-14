@@ -2,6 +2,7 @@ use crate::format::*;
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::net::Ipv4Addr;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::oneshot;
 
@@ -119,7 +120,7 @@ impl World {
     }
 }
 
-
+#[derive(Debug, Clone)]
 pub struct Device {
     pub uuid: Uuid,
     pub tx: Sender<Command>,
@@ -152,5 +153,16 @@ impl Device {
         self.tx.send(Command::RecvNonBlocking(self.uuid, tx)).await.expect("send command recv nonblocking failed");
 
         rx.await.expect("command recv nonblocking callback failed. unreachable!")
+    }
+}
+
+pub struct Ethernet {
+    port: Device,
+    ip: Ipv4Addr,
+}
+
+impl Ethernet {
+    pub fn new() -> Self {
+        todo!()
     }
 }

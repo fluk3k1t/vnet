@@ -5,6 +5,7 @@ use crate::format::*;
 
 use std::collections::HashMap;
 
+// ポートにmacアドレスが必要
 pub struct L2 {
     ports: Vec<Device>,
     mactbl: HashMap<u32, MacAddr6>,
@@ -21,6 +22,7 @@ impl L2 {
     pub fn run(mut self) {
         tokio::spawn(async move {
             loop {
+                // 1ポート1スレッドか非同期だとどっちが早い？
                 let recvs: Vec<_> = {
                     let mut tmp = Vec::new();
                     for (n, port) in &mut self.ports.iter_mut().enumerate() {
