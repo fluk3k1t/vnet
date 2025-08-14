@@ -24,7 +24,6 @@ impl HasUuid for &Device {
     }
 }
 
-
 pub enum Command {
     Send(Uuid, EthernetFrame<Ipv4Packet<String>>),
     Recv(Uuid, oneshot::Sender<EthernetFrame<Ipv4Packet<String>>>),
