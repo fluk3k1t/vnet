@@ -9,11 +9,12 @@ use std::collections::VecDeque;
 use std::net::Ipv4Addr;
 
 #[derive(Debug, Clone)]
-struct PortConfig {
+pub struct PortConfig {
     ip: Ipv4Addr,
     subnet: Ipv4Addr,
     // というかネットワーク層から見てデータリンク層のハンドラが欲しい
-    port: Device,
+    // コネクト用
+    pub port: Device,
     // デバイスに紐づいていたほうが自然な気はする
     // ただ現状デバイスはシミュレーション世界での通信路の抽象化なので、もう一段何かしらを挟んだほうが適切な気はする
     mac: MacAddr6,
@@ -30,7 +31,8 @@ pub struct Message {
 // VStreamへのsend自体は同期的ノンブロッキングだけど、セッション的には（レイヤーの話ではない）arpしたりと非同期になることもあるのでjob queueにする
 // Router固有ではないので、LanAdapterライブラリ的なレイヤのものとしてのちのち実装したい
 pub struct Router {
-    ports: HashMap<u32, PortConfig>,
+    // コネクト用
+    pub ports: HashMap<u32, PortConfig>,
     arp_table: HashMap<Ipv4Addr, MacAddr6>,
     message_fifo: VecDeque<Message>,
     arp_requests: Vec<Ipv4Addr>,
@@ -104,6 +106,18 @@ impl Router {
                         self.message_fifo.remove(idx);
                     } else {
                         if !self.arp_requests.contains(&message.dst_ip) {
+                            let port = self.ports.get_mut(&message.com).unwrap();
+                            let arp_req_packet =
+                                ArpPacket::mk_request(message.dst_ip, port.ip, port.mac);
+
+                            port.port
+                                .send(EthernetFrame::new(
+                                    port.mac,
+                                    MacAddr6::broadcast(),
+                                    Format::Arp(arp_req_packet),
+                                ))
+                                .await;
+
                             self.arp_requests.push(message.dst_ip);
                         }
                     }
@@ -183,7 +197,7 @@ impl<'a> RouterBuilder<'a> {
 
     pub fn build(self) -> Router {
         Router {
-            ports: HashMap::new(),
+            ports: self.ports,
             arp_table: HashMap::new(),
             message_fifo: VecDeque::new(),
             arp_requests: Vec::new(),
