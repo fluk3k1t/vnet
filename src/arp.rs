@@ -24,7 +24,7 @@ pub struct ArpPacket {
 #[derive(Debug, Clone)]
 pub enum ArpOperation {
     Request,
-    Reply
+    Reply,
 }
 
 impl ArpPacket {

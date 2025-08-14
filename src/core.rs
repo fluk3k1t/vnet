@@ -25,9 +25,9 @@ impl HasUuid for &Device {
 }
 
 pub enum Command {
-    Send(Uuid, EthernetFrame<Ipv4Packet<String>>),
-    Recv(Uuid, oneshot::Sender<EthernetFrame<Ipv4Packet<String>>>),
-    RecvNonBlocking(Uuid, oneshot::Sender<Option<EthernetFrame<Ipv4Packet<String>>>>),
+    Send(Uuid, EthernetFrame<Format>),
+    Recv(Uuid, oneshot::Sender<EthernetFrame<Format>>),
+    RecvNonBlocking(Uuid, oneshot::Sender<Option<EthernetFrame<Format>>>),
 }
 
 pub struct World {
@@ -35,8 +35,8 @@ pub struct World {
     pub tx: Sender<Command>,
     rx: Receiver<Command>,
     next_uuid: Uuid,
-    pending: HashMap<Uuid, oneshot::Sender<EthernetFrame<Ipv4Packet<String>>>>,
-    buffer: HashMap<Uuid, Vec<EthernetFrame<Ipv4Packet<String>>>>,
+    pending: HashMap<Uuid, oneshot::Sender<EthernetFrame<Format>>>,
+    buffer: HashMap<Uuid, Vec<EthernetFrame<Format>>>,
     connections: HashMap<Uuid, Vec<Uuid>>,
 }
 
@@ -92,27 +92,29 @@ impl World {
                                     self.buffer.insert(*dst, vec![frame.clone()]);
                                 }
                             }
-                        }   
+                        }
                     }
-                },
+                }
                 Command::Recv(uuid, res) => {
                     if let Some(buffer) = self.buffer.get_mut(&uuid) {
                         if !buffer.is_empty() {
-                            res.send(buffer.pop().unwrap()).expect("Command Recv failed");
+                            res.send(buffer.pop().unwrap())
+                                .expect("Command Recv failed");
                         } else {
                             self.pending.insert(uuid, res);
                         }
                     } else {
                         self.pending.insert(uuid, res);
                     }
-                },
+                }
                 Command::RecvNonBlocking(uuid, res) => {
                     if let Some(buffer) = self.buffer.get_mut(&uuid) {
-                        res.send(buffer.pop()).expect("Command RecvNonblocking failed");
+                        res.send(buffer.pop())
+                            .expect("Command RecvNonblocking failed");
                     } else {
                         res.send(None).expect("Command RecvNonBlocking failed");
                     }
-                },
+                }
                 _ => todo!(),
             }
         }
@@ -127,31 +129,38 @@ pub struct Device {
 
 impl Device {
     pub fn new(uuid: Uuid, tx: Sender<Command>) -> Self {
-        Device {
-            uuid,
-            tx, 
-        }
+        Device { uuid, tx }
     }
 
-    pub async fn send(&mut self, frame: EthernetFrame<Ipv4Packet<String>>) {
-        self.tx.send(Command::Send(self.uuid, frame)).await.expect("command send failed");
+    pub async fn send(&mut self, frame: EthernetFrame<Format>) {
+        self.tx
+            .send(Command::Send(self.uuid, frame))
+            .await
+            .expect("command send failed");
     }
 
-    pub async fn recv(&mut self) -> EthernetFrame<Ipv4Packet<String>> {
+    pub async fn recv(&mut self) -> EthernetFrame<Format> {
         let (tx, rx) = oneshot::channel();
 
-        self.tx.send(Command::Recv(self.uuid, tx)).await.expect("command recv failed"); 
+        self.tx
+            .send(Command::Recv(self.uuid, tx))
+            .await
+            .expect("command recv failed");
 
         rx.await.expect("command recv callback failed")
     }
 
     // 表面的な挙動は同期的だがcoreにメッセージパッシングでコールするので非同期になっている
-    pub async fn recv_nonblocking(&mut self) -> Option<EthernetFrame<Ipv4Packet<String>>> {
+    pub async fn recv_nonblocking(&mut self) -> Option<EthernetFrame<Format>> {
         let (tx, rx) = oneshot::channel();
 
-        self.tx.send(Command::RecvNonBlocking(self.uuid, tx)).await.expect("send command recv nonblocking failed");
+        self.tx
+            .send(Command::RecvNonBlocking(self.uuid, tx))
+            .await
+            .expect("send command recv nonblocking failed");
 
-        rx.await.expect("command recv nonblocking callback failed. unreachable!")
+        rx.await
+            .expect("command recv nonblocking callback failed. unreachable!")
     }
 }
 

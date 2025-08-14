@@ -1,0 +1,9 @@
+"filename", "language", "Rust", "comment", "blank", "total"
+"/workspaces/vnet/src/arp.rs", "Rust", 0, 0, 1, 1
+"/workspaces/vnet/src/core.rs", "Rust", 12, 0, 0, 12
+"/workspaces/vnet/src/format.rs", "Rust", -6, 0, 1, -5
+"/workspaces/vnet/src/l2.rs", "Rust", 9, 0, 1, 10
+"/workspaces/vnet/src/lib.rs", "Rust", 0, 0, 1, 1
+"/workspaces/vnet/src/main.rs", "Rust", 12, 0, 0, 12
+"/workspaces/vnet/src/router.rs", "Rust", 21, 0, 0, 21
+"Total", "-", 48, 0, 4, 52

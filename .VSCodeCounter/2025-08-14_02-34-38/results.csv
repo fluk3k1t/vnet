@@ -1,0 +1,13 @@
+"filename", "language", "Rust", "TOML", "Markdown", "comment", "blank", "total"
+"/workspaces/vnet/Cargo.lock", "TOML", 0, 319, 0, 2, 45, 366
+"/workspaces/vnet/Cargo.toml", "TOML", 0, 7, 0, 1, 2, 10
+"/workspaces/vnet/README.md", "Markdown", 0, 0, 0, 0, 1, 1
+"/workspaces/vnet/src/arp.rs", "Rust", 29, 0, 0, 5, 7, 41
+"/workspaces/vnet/src/core.rs", "Rust", 153, 0, 0, 2, 25, 180
+"/workspaces/vnet/src/ethernet.rs", "Rust", 0, 0, 0, 0, 1, 1
+"/workspaces/vnet/src/format.rs", "Rust", 38, 0, 0, 0, 7, 45
+"/workspaces/vnet/src/l2.rs", "Rust", 56, 0, 0, 7, 10, 73
+"/workspaces/vnet/src/lib.rs", "Rust", 10, 0, 0, 0, 5, 15
+"/workspaces/vnet/src/main.rs", "Rust", 65, 0, 0, 0, 12, 77
+"/workspaces/vnet/src/router.rs", "Rust", 98, 0, 0, 8, 19, 125
+"Total", "-", 449, 326, 0, 25, 134, 934
