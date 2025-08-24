@@ -1,6 +1,12 @@
+pub mod core;
+pub use core::*;
+
+pub mod device;
+pub use device::*;
+
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
-    
+}
 
 #[cfg(test)]
 mod tests {
