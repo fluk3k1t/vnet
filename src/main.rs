@@ -1,4 +1,6 @@
-use vnet::{Core, Device, Stream};
+use std::{thread::sleep, time::Duration};
+
+use vnet::{Command, Core, Device, Stream};
 
 #[tokio::main]
 pub async fn main() {
@@ -15,7 +17,9 @@ pub async fn main() {
 
     tokio::spawn(async move {
         let r = d1.recv().await;
+        println!("{:?}", r);
+        d1.com.call(Command::Shutdown).await;
     });
 
-    core.run().await;
+    tokio::spawn(core.run());
 }

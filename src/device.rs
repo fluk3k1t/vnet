@@ -1,7 +1,7 @@
 use crate::{Com, Core, HasCom, Stream, Uuid};
 
 pub struct Device {
-    com: Com,
+    pub com: Com,
 }
 
 impl Device {

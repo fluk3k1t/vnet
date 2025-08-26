@@ -9,9 +9,15 @@ pub struct Message {
     payload: Stream,
 }
 
+pub enum Command {
+    Shutdown,
+}
+
 pub struct Core {
     rx: Receiver<Message>,
     tx: Sender<Message>,
+    syshandler: Receiver<Command>,
+    syscaller: Sender<Command>,
     coms: HashMap<Uuid, Sender<Stream>>,
     connections: HashMap<Uuid, Vec<Uuid>>,
     next_uuid: Uuid,
@@ -20,9 +26,13 @@ pub struct Core {
 impl Core {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(32);
+        let (syscaller, syshandler) = mpsc::channel(32);
+
         Core {
             tx,
             rx,
+            syshandler,
+            syscaller,
             coms: HashMap::new(),
             connections: HashMap::new(),
             next_uuid: 0,
@@ -39,6 +49,7 @@ impl Core {
         Com {
             tx: self.tx.clone(),
             rx,
+            syscaller: self.syscaller.clone(),
             uuid,
         }
     }
@@ -60,12 +71,26 @@ impl Core {
 
     pub async fn run(mut self) {
         loop {
-            if let Some(msg) = self.rx.recv().await {
-                if let Some(targets) = self.connections.get(&msg.uuid) {
-                    for target_uuid in targets {
-                        // msgが送信される時点で送信側はCOMつまりUUIDを持っており、UUIDは初期化時点で明らかにcomsに追加されているので必ずSome
-                        let target_com = self.coms.get_mut(target_uuid).unwrap();
-                        target_com.send(msg.payload.clone()).await;
+            tokio::select! {
+                msg = self.rx.recv() => {
+                    if let Some(msg) = msg {
+                        if let Some(targets) = self.connections.get(&msg.uuid) {
+                            for target_uuid in targets {
+                                // msgが送信される時点で送信側はCOMつまりUUIDを持っており、UUIDは初期化時点で明らかにcomsに追加されているので必ずSome
+                                let target_com = self.coms.get_mut(target_uuid).unwrap();
+                                target_com.send(msg.payload.clone()).await.unwrap();
+                            }
+                        }
+                    } else {
+                        println!("all senders were dropped!");
+                        break;
+                    }
+                }
+
+                cmd = self.syshandler.recv() => {
+                    match cmd.unwrap() {
+                        Command::Shutdown => break,
+                        _ => unreachable!(),
                     }
                 }
             }
@@ -76,11 +101,12 @@ impl Core {
 pub struct Com {
     tx: Sender<Message>,
     rx: Receiver<Stream>,
+    syscaller: Sender<Command>,
     pub uuid: Uuid,
 }
 
 impl Com {
-    pub async fn send(&mut self, payload: Stream) {
+    pub async fn send(&self, payload: Stream) {
         self.tx
             .send(Message {
                 uuid: self.uuid,
@@ -93,11 +119,16 @@ impl Com {
     pub async fn recv(&mut self) -> Stream {
         self.rx.recv().await.unwrap()
     }
+
+    pub async fn call(&mut self, cmd: Command) {
+        self.syscaller.send(cmd).await.unwrap();
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stream {
     Ipv4,
+    Dummy,
 }
 
 pub trait HasCom {
