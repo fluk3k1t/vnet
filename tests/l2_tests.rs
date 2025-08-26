@@ -1,10 +1,11 @@
 use std::{thread::sleep, time::Duration};
 
 use macaddr::MacAddr6;
-use vnet::{Command, Core, Device, EthernetFrame, L2Sw, Nic, Pdu};
+use tokio::test;
+use vnet::{Command, Core, Device, EthernetFrame, L2Sw, Pdu};
 
-#[tokio::main]
-pub async fn main() {
+#[tokio::test]
+async fn test_l2_learning() {
     let mut core = Core::new();
 
     let mut sw0 = L2Sw::new(&mut core, 3);
@@ -28,16 +29,18 @@ pub async fn main() {
     ));
 
     let msg1 = Pdu::EthernetFrame(EthernetFrame::new(
-        d0mac,
         d1mac,
-        "from d0 after learning".to_string(),
+        d0mac,
+        "from d1 after learning".to_string(),
     ));
 
     let _msg0 = msg0.clone();
     let _msg1 = msg1.clone();
     tokio::spawn(async move {
         d0.send(_msg0).await;
-        d0.send(_msg1).await;
+
+        let pdu = d0.recv().await;
+        assert_eq!(pdu, _msg1);
     });
 
     let _msg0 = msg0.clone();
@@ -47,9 +50,7 @@ pub async fn main() {
 
         assert_eq!(pdu, _msg0);
 
-        let pdu = d1.recv().await;
-
-        assert_eq!(pdu, _msg1);
+        d1.send(_msg1).await;
     });
 
     let _msg0 = msg0.clone();

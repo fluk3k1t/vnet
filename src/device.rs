@@ -1,4 +1,4 @@
-use crate::{Com, Core, HasCom, Pdu, Uuid};
+use crate::{Com, Core, HasUuid, Pdu, Uuid};
 
 pub struct Device {
     pub com: Com,
@@ -16,10 +16,14 @@ impl Device {
     pub async fn recv(&mut self) -> Pdu {
         self.com.recv().await
     }
+
+    pub async fn received(&mut self) -> bool {
+        self.com.received()
+    }
 }
 
-impl HasCom for Device {
-    fn com(&self) -> &Com {
-        &self.com
+impl HasUuid for Device {
+    fn uuid(&self) -> Uuid {
+        self.com.uuid
     }
 }

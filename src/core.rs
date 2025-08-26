@@ -1,11 +1,12 @@
 use anyhow::{Context, Result, ensure};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
 use crate::EthernetFrame;
 
 pub type Uuid = u32;
 
+#[derive(Debug)]
 pub struct Message {
     uuid: Uuid,
     payload: Pdu,
@@ -51,14 +52,15 @@ impl Core {
         Com {
             tx: self.tx.clone(),
             rx,
+            buffer: VecDeque::new(),
             syscaller: self.syscaller.clone(),
             uuid,
         }
     }
 
-    pub fn connect(&mut self, u1: &impl HasCom, u2: &impl HasCom) {
-        let u1 = u1.com().uuid;
-        let u2 = u2.com().uuid;
+    pub fn connect(&mut self, u1: &impl HasUuid, u2: &impl HasUuid) {
+        let u1 = u1.uuid();
+        let u2 = u2.uuid();
 
         self.connections
             .entry(u1)
@@ -80,7 +82,12 @@ impl Core {
                             for target_uuid in targets {
                                 // msgが送信される時点で送信側はCOMつまりUUIDを持っており、UUIDは初期化時点で明らかにcomsに追加されているので必ずSome
                                 let target_com = self.coms.get_mut(target_uuid).unwrap();
-                                target_com.send(msg.payload.clone()).await.unwrap();
+                                if let Ok(_) = target_com.send(msg.payload.clone()).await {
+                                } else {
+                                    // Errをはじくなら、Comが所有者がrunしないタイプでもdropされないようにしなければならない
+                                    // 宛先が存在しない、というのは論理エラーとすることもできるが、処理しないにしても何らかのログや警告の通知を行いたい
+                                    println!("target com port {:?} is already closed!", target_com);
+                                }
                             }
                         } else {
                             println!("unconnected!");
@@ -110,6 +117,7 @@ pub struct Com {
     rx: Receiver<Pdu>,
     syscaller: Sender<Command>,
     pub uuid: Uuid,
+    buffer: VecDeque<Pdu>,
 }
 
 // Coreのメインループが回る前にcallしたりするとchannelが開かれていないので必ずエラーになってしまう、、、
@@ -127,11 +135,25 @@ impl Com {
         }
     }
 
-    pub fn received(&self) -> bool {
-        !self.rx.is_empty()
+    pub fn received(&mut self) -> bool {
+        if !self.buffer.is_empty() {
+            return true;
+        }
+        match self.rx.try_recv() {
+            Ok(msg) => {
+                self.buffer.push_back(msg);
+                true
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => false,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => false,
+        }
     }
 
     pub async fn recv(&mut self) -> Pdu {
+        if let Some(msg) = self.buffer.pop_front() {
+            return msg;
+        }
+
         self.rx.recv().await.unwrap()
     }
 
@@ -153,6 +175,6 @@ pub enum Pdu {
     Dummy,
 }
 
-pub trait HasCom {
-    fn com(&self) -> &Com;
+pub trait HasUuid {
+    fn uuid(&self) -> Uuid;
 }

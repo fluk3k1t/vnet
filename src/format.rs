@@ -7,3 +7,8 @@ pub struct EthernetFrame<T> {
     pub payload: T,
 }
 
+impl<T> EthernetFrame<T> {
+    pub fn new(src: MacAddr6, dst: MacAddr6, payload: T) -> Self {
+        EthernetFrame { src, dst, payload }
+    }
+}

@@ -2,7 +2,7 @@ use std::{collections::HashMap, iter::repeat_with};
 
 use macaddr::MacAddr6;
 
-use crate::{Com, Core, Pdu};
+use crate::{Com, Core, HasUuid, Pdu, Uuid};
 
 // L2スイッチのポートはMacアドレスを持つのかと思ったが、もし持っていると経路制御できないのでMacアドレスは持たないとわかる
 // L2レイヤーと言ってはいるが、L2のプロトコルで動くだけでL2の情報を必ずしも持つ必要はない訳ね
@@ -11,11 +11,25 @@ pub struct L2Sw {
     rtb: HashMap<MacAddr6, usize>,
 }
 
+pub struct L2SwHasUuid {
+    uuid: Uuid,
+}
+
 impl L2Sw {
     pub fn new(core: &mut Core, n_ports: usize) -> Self {
         L2Sw {
             coms: repeat_with(|| core.com()).take(n_ports).collect(),
             rtb: HashMap::new(),
+        }
+    }
+
+    pub fn com(&self, n_port: usize) -> L2SwHasUuid {
+        L2SwHasUuid {
+            uuid: self
+                .coms
+                .get(n_port)
+                .expect("you tried to get uuid from unexisted com port!")
+                .uuid,
         }
     }
 
@@ -30,6 +44,8 @@ impl L2Sw {
                             Pdu::EthernetFrame(ef) => {
                                 self.rtb.insert(ef.src, i);
 
+                                println!("l2 received {:?}", ef);
+
                                 if let Some(dst_com_idx) = self.rtb.get(&ef.dst) {
                                     // PDUの宛先MACアドレスに対応するポートを学習済み
 
@@ -42,7 +58,7 @@ impl L2Sw {
 
                                     // 送信元ポート以外の全ポートからPDUを送出
                                     for j in 0..self.coms.len() {
-                                        if j == i {
+                                        if j != i {
                                             let com = self.coms.get_mut(j).expect("unreachable!");
                                             com.send(Pdu::EthernetFrame(ef.clone())).await;
                                         }
@@ -57,5 +73,11 @@ impl L2Sw {
                 tokio::task::yield_now().await;
             }
         });
+    }
+}
+
+impl HasUuid for L2SwHasUuid {
+    fn uuid(&self) -> Uuid {
+        self.uuid
     }
 }
