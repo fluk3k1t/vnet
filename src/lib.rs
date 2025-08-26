@@ -30,7 +30,7 @@ mod tests {
             d0.send(Stream::Dummy).await;
         });
 
-        core.run();
+        core.run().await;
     }
 
     #[tokio::test]

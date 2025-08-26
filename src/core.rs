@@ -97,6 +97,8 @@ impl Core {
                 }
             }
         }
+
+        println!("Core main loop has ended");
     }
 }
 
@@ -111,13 +113,16 @@ pub struct Com {
 // Coreのメインループが回る前にcallしたりするとchannelが開かれていないので必ずエラーになってしまう、、、
 impl Com {
     pub async fn send(&self, payload: Stream) {
-        self.tx
+        if let Err(err) = self
+            .tx
             .send(Message {
                 uuid: self.uuid,
                 payload,
             })
             .await
-            .unwrap();
+        {
+            println!("{:?}", err);
+        }
     }
 
     pub async fn recv(&mut self) -> Stream {
