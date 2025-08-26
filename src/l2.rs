@@ -2,7 +2,7 @@ use std::{collections::HashMap, iter::repeat_with};
 
 use macaddr::MacAddr6;
 
-use crate::{Com, Core, HasUuid, Pdu, Uuid};
+use crate::{Com, Core, EthernetFrame, EthernetFrameType, HasUuid, Pdu, Uuid};
 
 // L2スイッチのポートはMacアドレスを持つのかと思ったが、もし持っていると経路制御できないのでMacアドレスは持たないとわかる
 // L2レイヤーと言ってはいるが、L2のプロトコルで動くだけでL2の情報を必ずしも持つ必要はない訳ね
@@ -38,34 +38,28 @@ impl L2Sw {
             loop {
                 for i in 0..self.coms.len() {
                     if self.coms[i].received() {
-                        let pdu = self.coms[i].recv().await;
+                        let ef = self.coms[i].recv().await;
 
-                        match pdu {
-                            Pdu::EthernetFrame(ef) => {
-                                self.rtb.insert(ef.src, i);
+                        self.rtb.insert(ef.src, i);
 
-                                println!("l2 received {:?}", ef);
+                        println!("l2 received {:?}", ef);
 
-                                if let Some(dst_com_idx) = self.rtb.get(&ef.dst) {
-                                    // PDUの宛先MACアドレスに対応するポートを学習済み
+                        if let Some(dst_com_idx) = self.rtb.get(&ef.dst) {
+                            // PDUの宛先MACアドレスに対応するポートを学習済み
 
-                                    // rtbに格納されるvalueはcoms.lenの範囲なのでcomsへのアクセスが範囲外エラーになることは明らかにないはず
-                                    let dst_com =
-                                        self.coms.get_mut(*dst_com_idx).expect("unreachable!");
-                                    dst_com.send(Pdu::EthernetFrame(ef)).await;
-                                } else {
-                                    // 学習済みでない
+                            // rtbに格納されるvalueはcoms.lenの範囲なのでcomsへのアクセスが範囲外エラーになることは明らかにないはず
+                            let dst_com = self.coms.get_mut(*dst_com_idx).expect("unreachable!");
+                            dst_com.send(ef).await;
+                        } else {
+                            // 学習済みでない
 
-                                    // 送信元ポート以外の全ポートからPDUを送出
-                                    for j in 0..self.coms.len() {
-                                        if j != i {
-                                            let com = self.coms.get_mut(j).expect("unreachable!");
-                                            com.send(Pdu::EthernetFrame(ef.clone())).await;
-                                        }
-                                    }
+                            // 送信元ポート以外の全ポートからPDUを送出
+                            for j in 0..self.coms.len() {
+                                if j != i {
+                                    let com = self.coms.get_mut(j).expect("unreachable!");
+                                    com.send(ef.clone()).await;
                                 }
                             }
-                            _ => unreachable!(),
                         }
                     }
                 }
@@ -79,5 +73,30 @@ impl L2Sw {
 impl HasUuid for L2SwHasUuid {
     fn uuid(&self) -> Uuid {
         self.uuid
+    }
+}
+
+pub struct Ethernet {
+    mac: MacAddr6,
+    com: Com,
+}
+
+impl Ethernet {
+    pub fn new(core: &mut Core, mac: MacAddr6) -> Self {
+        Ethernet {
+            mac,
+            com: core.com(),
+        }
+    }
+
+    pub async fn send(&mut self, dst: MacAddr6, payload: EthernetFrameType) {
+        let ef = EthernetFrame::new(self.mac, dst, payload);
+
+        self.com.send(ef).await;
+    }
+
+    pub async fn recv(&mut self) -> EthernetFrame {
+        let ef = self.com.recv().await;
+        todo!()
     }
 }

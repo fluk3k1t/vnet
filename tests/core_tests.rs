@@ -1,4 +1,4 @@
-use vnet::{Command, Core, Device, Pdu};
+use vnet::{Command, Core, Device, EthernetFrame};
 
 #[tokio::test]
 async fn test_com() {
@@ -11,12 +11,12 @@ async fn test_com() {
 
     tokio::spawn(async move {
         let r = d1.recv().await;
-        assert_eq!(r, Pdu::Dummy);
+        assert_eq!(r, EthernetFrame::dummy());
         d1.com.call(Command::Shutdown).await;
     });
 
     tokio::spawn(async move {
-        d0.send(Pdu::Dummy).await;
+        d0.send(EthernetFrame::dummy()).await;
     });
 
     core.run().await;
@@ -30,7 +30,7 @@ async fn test_com_unconnected() {
     let mut d1 = Device::new(&mut core);
 
     tokio::spawn(async move {
-        d0.send(Pdu::Dummy).await;
+        d0.send(EthernetFrame::dummy()).await;
     });
 
     tokio::spawn(async move {

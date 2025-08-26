@@ -1,4 +1,4 @@
-use crate::{Com, Core, HasUuid, Pdu, Uuid};
+use crate::{Com, Core, EthernetFrame, HasUuid, Uuid};
 
 pub struct Device {
     pub com: Com,
@@ -9,11 +9,11 @@ impl Device {
         Device { com: core.com() }
     }
 
-    pub async fn send(&mut self, payload: Pdu) {
+    pub async fn send(&mut self, payload: EthernetFrame) {
         self.com.send(payload).await
     }
 
-    pub async fn recv(&mut self) -> Pdu {
+    pub async fn recv(&mut self) -> EthernetFrame {
         self.com.recv().await
     }
 

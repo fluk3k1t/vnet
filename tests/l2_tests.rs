@@ -2,7 +2,7 @@ use std::{thread::sleep, time::Duration};
 
 use macaddr::MacAddr6;
 use tokio::test;
-use vnet::{Command, Core, Device, EthernetFrame, L2Sw, Pdu};
+use vnet::{Command, Core, Device, EthernetFrame, EthernetFrameType, L2Sw, Pdu};
 
 #[tokio::test]
 async fn test_l2_learning() {
@@ -22,17 +22,17 @@ async fn test_l2_learning() {
 
     sw0.run();
 
-    let msg0 = Pdu::EthernetFrame(EthernetFrame::new(
+    let msg0 = EthernetFrame::new(
         d0mac,
         d1mac,
-        "from d0 before learning".to_string(),
-    ));
+        EthernetFrameType::Debug("from d0 before learning".to_string()),
+    );
 
-    let msg1 = Pdu::EthernetFrame(EthernetFrame::new(
+    let msg1 = EthernetFrame::new(
         d1mac,
         d0mac,
-        "from d1 after learning".to_string(),
-    ));
+        EthernetFrameType::Debug("from d1 after learning".to_string()),
+    );
 
     let _msg0 = msg0.clone();
     let _msg1 = msg1.clone();

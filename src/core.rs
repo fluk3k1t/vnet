@@ -9,7 +9,7 @@ pub type Uuid = u32;
 #[derive(Debug)]
 pub struct Message {
     uuid: Uuid,
-    payload: Pdu,
+    payload: EthernetFrame,
 }
 
 pub enum Command {
@@ -21,7 +21,7 @@ pub struct Core {
     tx: Sender<Message>,
     syshandler: Receiver<Command>,
     syscaller: Sender<Command>,
-    coms: HashMap<Uuid, Sender<Pdu>>,
+    coms: HashMap<Uuid, Sender<EthernetFrame>>,
     connections: HashMap<Uuid, Vec<Uuid>>,
     next_uuid: Uuid,
 }
@@ -114,15 +114,15 @@ impl Core {
 // syscallerとmessageを分ける必要あるのか？？？
 pub struct Com {
     tx: Sender<Message>,
-    rx: Receiver<Pdu>,
+    rx: Receiver<EthernetFrame>,
     syscaller: Sender<Command>,
     pub uuid: Uuid,
-    buffer: VecDeque<Pdu>,
+    buffer: VecDeque<EthernetFrame>,
 }
 
 // Coreのメインループが回る前にcallしたりするとchannelが開かれていないので必ずエラーになってしまう、、、
 impl Com {
-    pub async fn send(&self, payload: Pdu) {
+    pub async fn send(&self, payload: EthernetFrame) {
         if let Err(err) = self
             .tx
             .send(Message {
@@ -149,7 +149,7 @@ impl Com {
         }
     }
 
-    pub async fn recv(&mut self) -> Pdu {
+    pub async fn recv(&mut self) -> EthernetFrame {
         if let Some(msg) = self.buffer.pop_front() {
             return msg;
         }
@@ -171,7 +171,7 @@ impl Drop for Com {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pdu {
     Ipv4,
-    EthernetFrame(EthernetFrame<String>),
+    EthernetFrame(EthernetFrame),
     Dummy,
 }
 
