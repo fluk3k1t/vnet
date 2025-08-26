@@ -11,15 +11,17 @@ pub async fn main() {
 
     core.connect(&d0, &d1);
 
-    tokio::spawn(async move {
+    let core_task = tokio::spawn(core.run());
+
+    let d0_task = tokio::spawn(async move {
         d0.send(Stream::Ipv4).await;
     });
 
-    tokio::spawn(async move {
+    let d1_task = tokio::spawn(async move {
         let r = d1.recv().await;
         println!("{:?}", r);
         d1.com.call(Command::Shutdown).await;
     });
 
-    tokio::spawn(core.run());
+    let _ = tokio::join!(core_task, d0_task, d1_task);
 }

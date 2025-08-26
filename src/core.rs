@@ -80,6 +80,8 @@ impl Core {
                                 let target_com = self.coms.get_mut(target_uuid).unwrap();
                                 target_com.send(msg.payload.clone()).await.unwrap();
                             }
+                        } else {
+                            println!("unconnected!");
                         }
                     } else {
                         println!("all senders were dropped!");
@@ -98,6 +100,7 @@ impl Core {
     }
 }
 
+// syscallerとmessageを分ける必要あるのか？？？
 pub struct Com {
     tx: Sender<Message>,
     rx: Receiver<Stream>,
@@ -105,6 +108,7 @@ pub struct Com {
     pub uuid: Uuid,
 }
 
+// Coreのメインループが回る前にcallしたりするとchannelが開かれていないので必ずエラーになってしまう、、、
 impl Com {
     pub async fn send(&self, payload: Stream) {
         self.tx
@@ -122,6 +126,12 @@ impl Com {
 
     pub async fn call(&mut self, cmd: Command) {
         self.syscaller.send(cmd).await.unwrap();
+    }
+}
+
+impl Drop for Com {
+    fn drop(&mut self) {
+        // ShutdownなりすべてのComが終了したのちメインループを終了させるようなコマンドを送出
     }
 }
 
