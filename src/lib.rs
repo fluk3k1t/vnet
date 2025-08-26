@@ -7,6 +7,12 @@ pub use device::*;
 pub mod nic;
 pub use nic::*;
 
+pub mod l2;
+pub use l2::*;
+
+pub mod format;
+pub use format::*;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -22,12 +28,12 @@ mod tests {
 
         tokio::spawn(async move {
             let r = d1.recv().await;
-            assert_eq!(r, Stream::Dummy);
+            assert_eq!(r, Pdu::Dummy);
             d1.com.call(Command::Shutdown).await;
         });
 
         tokio::spawn(async move {
-            d0.send(Stream::Dummy).await;
+            d0.send(Pdu::Dummy).await;
         });
 
         core.run().await;
@@ -41,7 +47,7 @@ mod tests {
         let mut d1 = Device::new(&mut core);
 
         tokio::spawn(async move {
-            d0.send(Stream::Dummy).await;
+            d0.send(Pdu::Dummy).await;
         });
 
         tokio::spawn(async move {

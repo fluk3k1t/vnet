@@ -2,11 +2,13 @@ use anyhow::{Context, Result, ensure};
 use std::collections::HashMap;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
+use crate::EthernetFrame;
+
 pub type Uuid = u32;
 
 pub struct Message {
     uuid: Uuid,
-    payload: Stream,
+    payload: Pdu,
 }
 
 pub enum Command {
@@ -18,7 +20,7 @@ pub struct Core {
     tx: Sender<Message>,
     syshandler: Receiver<Command>,
     syscaller: Sender<Command>,
-    coms: HashMap<Uuid, Sender<Stream>>,
+    coms: HashMap<Uuid, Sender<Pdu>>,
     connections: HashMap<Uuid, Vec<Uuid>>,
     next_uuid: Uuid,
 }
@@ -105,14 +107,14 @@ impl Core {
 // syscallerとmessageを分ける必要あるのか？？？
 pub struct Com {
     tx: Sender<Message>,
-    rx: Receiver<Stream>,
+    rx: Receiver<Pdu>,
     syscaller: Sender<Command>,
     pub uuid: Uuid,
 }
 
 // Coreのメインループが回る前にcallしたりするとchannelが開かれていないので必ずエラーになってしまう、、、
 impl Com {
-    pub async fn send(&self, payload: Stream) {
+    pub async fn send(&self, payload: Pdu) {
         if let Err(err) = self
             .tx
             .send(Message {
@@ -125,7 +127,11 @@ impl Com {
         }
     }
 
-    pub async fn recv(&mut self) -> Stream {
+    pub fn received(&self) -> bool {
+        !self.rx.is_empty()
+    }
+
+    pub async fn recv(&mut self) -> Pdu {
         self.rx.recv().await.unwrap()
     }
 
@@ -141,8 +147,9 @@ impl Drop for Com {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Stream {
+pub enum Pdu {
     Ipv4,
+    EthernetFrame(EthernetFrame<String>),
     Dummy,
 }
 
