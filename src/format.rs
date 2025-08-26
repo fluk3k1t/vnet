@@ -2,8 +2,6 @@ use std::net::Ipv4Addr;
 
 use macaddr::MacAddr6;
 
-use crate::Ethernet;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EthernetFrame {
     pub dst: MacAddr6,

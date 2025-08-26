@@ -76,16 +76,18 @@ impl HasUuid for L2SwHasUuid {
     }
 }
 
-pub struct Ethernet {
+pub struct EthernetCard {
     mac: MacAddr6,
     com: Com,
+    is_promiscuous: bool,
 }
 
-impl Ethernet {
-    pub fn new(core: &mut Core, mac: MacAddr6) -> Self {
-        Ethernet {
+impl EthernetCard {
+    pub fn new(core: &mut Core, mac: MacAddr6, is_promiscuous: bool) -> Self {
+        EthernetCard {
             mac,
             com: core.com(),
+            is_promiscuous,
         }
     }
 
@@ -95,8 +97,13 @@ impl Ethernet {
         self.com.send(ef).await;
     }
 
-    pub async fn recv(&mut self) -> EthernetFrame {
+    pub async fn recv(&mut self) -> Option<EthernetFrame> {
         let ef = self.com.recv().await;
-        todo!()
+
+        if self.is_promiscuous || ef.dst == self.mac || ef.dst.is_broadcast() {
+            return Some(ef);
+        } else {
+            return None;
+        }
     }
 }
