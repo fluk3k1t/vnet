@@ -1,4 +1,4 @@
-use std::{fmt::Debug, marker::PhantomData};
+use std::{fmt::Debug, marker::PhantomData, pin::Pin};
 use tokio::{
     sync::{
         Mutex,
@@ -9,9 +9,9 @@ use tokio::{
 };
 
 pub trait Actor {
-    type Context: Sized + Send;
+    type Context: Sized + Send + 'static;
 
-    fn start(mut self) -> (Caller<Self>, JoinHandle<()>)
+    async fn start(mut self) -> (Caller<Self>, JoinHandle<()>)
     where
         Self: Sized + Send + 'static,
     {
@@ -32,17 +32,25 @@ pub trait Actor {
 
 pub trait Handler<M>
 where
-    Self: Actor + Sized,
-    M: Message,
+    Self: Actor + Sized + Send + 'static,
+    M: Message + Send + 'static,
 {
-    fn handle(&mut self, m: M, ctx: &mut Context<Self>) -> M::Return;
+    fn handle(
+        &mut self,
+        m: M,
+        ctx: &mut Context<Self>,
+    ) -> Pin<Box<dyn Future<Output = M::Return> + Send + '_>>;
 }
 
 pub trait EnvelopeProxy<A>: Send
 where
-    A: Actor,
+    A: Actor + Send + 'static,
 {
-    fn handle(self: Box<Self>, a: &mut A, ctx: &mut Context<A>);
+    fn handle(
+        self: Box<Self>,
+        a: &mut A,
+        ctx: &mut Context<A>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }
 
 #[derive(Debug)]
@@ -70,12 +78,18 @@ where
 
 impl<A, M> EnvelopeProxy<A> for Envelope<A, M>
 where
-    A: Actor + Handler<M> + Send,
-    M: Message + Send,
+    A: Actor + Handler<M> + Send + 'static,
+    M: Message + Send + 'static,
 {
-    fn handle(self: Box<Self>, a: &mut A, ctx: &mut Context<A>) {
-        let ret = a.handle(self.m, ctx);
-        self.s.send(ret).expect("EnvelopeProxy: return failed");
+    fn handle(
+        self: Box<Self>,
+        a: &mut A,
+        ctx: &mut Context<A>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async move {
+            let ret = a.handle(self.m, ctx).await;
+            self.s.send(ret).expect("EnvelopeProxy: return failed");
+        })
     }
 }
 
@@ -88,7 +102,7 @@ pub struct Caller<A: Actor> {
     s: UnboundedSender<Box<dyn EnvelopeProxy<A>>>,
 }
 
-impl<A: Actor> Mailbox<A> {
+impl<A: Actor + Send> Mailbox<A> {
     pub fn new() -> (Caller<A>, Self) {
         let (s, r) = mpsc::unbounded_channel();
 
@@ -120,19 +134,19 @@ impl<A: Actor> Caller<A> {
 }
 
 pub trait Message {
-    type Return: Send + Debug;
+    type Return: Send + Debug + 'static;
 }
 
 pub struct Context<A>
 where
-    A: Actor,
+    A: Actor + Send + 'static,
 {
     caller: Caller<A>,
 }
 
 impl<A> Context<A>
 where
-    A: Actor,
+    A: Actor + Send + 'static,
 {
     pub fn new(caller: Caller<A>) -> Self {
         Context { caller }
