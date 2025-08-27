@@ -5,9 +5,8 @@ use vnet::{Actor, Core, CreateCom, Handler};
 async fn main() {
     let (mut core, core_join) = Core::new().start();
 
-    let mut res = core.call(CreateCom).await;
-
-    println!("{}", res);
-
-    core_join.await.unwrap();
+    tokio::spawn(async move {
+        let res = core.call(CreateCom).await;
+        println!("{:?}", res);
+    });
 }

@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{fmt::Debug, marker::PhantomData};
 use tokio::{
     sync::{
         Mutex,
@@ -16,11 +16,11 @@ pub trait Actor {
         Self: Sized + Send + 'static,
     {
         let (caller, mut mb) = Mailbox::<Self>::new();
+        let mut ctx = Context::new(caller.clone());
 
         let join = tokio::spawn(async move {
-            loop {
-                let env = mb.recv().await;
-                let ret = env.handle(&mut self);
+            while let Some(env) = mb.recv().await {
+                env.handle(&mut self, &mut ctx);
             }
 
             ()
@@ -32,15 +32,20 @@ pub trait Actor {
 
 pub trait Handler<M>
 where
+    Self: Actor + Sized,
     M: Message,
 {
-    fn handle(&mut self, m: M) -> M::Return;
+    fn handle(&mut self, m: M, ctx: &mut Context<Self>) -> M::Return;
 }
 
-pub trait EnvelopeProxy<A>: Send {
-    fn handle(self: Box<Self>, a: &mut A);
+pub trait EnvelopeProxy<A>: Send
+where
+    A: Actor,
+{
+    fn handle(self: Box<Self>, a: &mut A, ctx: &mut Context<A>);
 }
 
+#[derive(Debug)]
 pub struct Envelope<A, M>
 where
     M: Message,
@@ -57,20 +62,20 @@ where
     pub fn new(m: M, s: Sender<M::Return>) -> Self {
         Envelope {
             m,
-            _a: PhantomData,
             s,
+            _a: PhantomData,
         }
     }
 }
 
 impl<A, M> EnvelopeProxy<A> for Envelope<A, M>
 where
-    A: Handler<M> + Send,
+    A: Actor + Handler<M> + Send,
     M: Message + Send,
 {
-    fn handle(self: Box<Self>, a: &mut A) {
-        let ret = a.handle(self.m);
-        self.s.send(ret);
+    fn handle(self: Box<Self>, a: &mut A, ctx: &mut Context<A>) {
+        let ret = a.handle(self.m, ctx);
+        self.s.send(ret).expect("EnvelopeProxy: return failed");
     }
 }
 
@@ -78,6 +83,7 @@ pub struct Mailbox<A: Actor> {
     r: UnboundedReceiver<Box<dyn EnvelopeProxy<A>>>,
 }
 
+#[derive(Debug)]
 pub struct Caller<A: Actor> {
     s: UnboundedSender<Box<dyn EnvelopeProxy<A>>>,
 }
@@ -89,8 +95,8 @@ impl<A: Actor> Mailbox<A> {
         (Caller { s }, Mailbox { r })
     }
 
-    pub async fn recv(&mut self) -> Box<dyn EnvelopeProxy<A>> {
-        self.r.recv().await.unwrap()
+    pub async fn recv(&mut self) -> Option<Box<dyn EnvelopeProxy<A>>> {
+        self.r.recv().await
     }
 }
 
@@ -107,8 +113,32 @@ impl<A: Actor> Caller<A> {
 
         r.await.unwrap()
     }
+
+    pub fn clone(&self) -> Self {
+        Caller { s: self.s.clone() }
+    }
 }
 
 pub trait Message {
-    type Return: Send;
+    type Return: Send + Debug;
+}
+
+pub struct Context<A>
+where
+    A: Actor,
+{
+    caller: Caller<A>,
+}
+
+impl<A> Context<A>
+where
+    A: Actor,
+{
+    pub fn new(caller: Caller<A>) -> Self {
+        Context { caller }
+    }
+
+    pub fn caller(&self) -> Caller<A> {
+        self.caller.clone()
+    }
 }
