@@ -1,9 +1,9 @@
-use once_cell::sync::Lazy;
-use std::{marker::PhantomData, sync::Arc, thread::sleep, time::Duration};
+use std::marker::PhantomData;
 use tokio::{
     sync::{
         Mutex,
         mpsc::{self, UnboundedReceiver, UnboundedSender},
+        oneshot::{self, Sender},
     },
     task::JoinHandle,
 };
@@ -11,49 +11,66 @@ use tokio::{
 pub trait Actor {
     type Context: Sized + Send;
 
-    fn start(mut self) -> Caller<Self>
+    fn start(mut self) -> (Caller<Self>, JoinHandle<()>)
     where
         Self: Sized + Send + 'static,
     {
         let (caller, mut mb) = Mailbox::<Self>::new();
 
-        tokio::spawn(async move {
+        let join = tokio::spawn(async move {
             loop {
-                let r = mb.recv().await;
-                r.handle(&mut self);
+                let env = mb.recv().await;
+                let ret = env.handle(&mut self);
             }
+
+            ()
         });
 
-        caller
+        (caller, join)
     }
 }
 
-pub trait Handler<M> {
-    fn handle(&mut self, m: M);
+pub trait Handler<M>
+where
+    M: Message,
+{
+    fn handle(&mut self, m: M) -> M::Return;
 }
 
 pub trait EnvelopeProxy<A>: Send {
     fn handle(self: Box<Self>, a: &mut A);
 }
 
-pub struct Envelope<A, M> {
+pub struct Envelope<A, M>
+where
+    M: Message,
+{
     m: M,
+    s: Sender<M::Return>,
     _a: PhantomData<A>,
 }
 
-impl<A, M> Envelope<A, M> {
-    pub fn new(m: M) -> Self {
-        Envelope { m, _a: PhantomData }
+impl<A, M> Envelope<A, M>
+where
+    M: Message,
+{
+    pub fn new(m: M, s: Sender<M::Return>) -> Self {
+        Envelope {
+            m,
+            _a: PhantomData,
+            s,
+        }
     }
 }
 
 impl<A, M> EnvelopeProxy<A> for Envelope<A, M>
 where
     A: Handler<M> + Send,
-    M: Send,
+    M: Message + Send,
 {
     fn handle(self: Box<Self>, a: &mut A) {
-        a.handle(self.m);
+        let ret = a.handle(self.m);
+        self.s.send(ret);
     }
 }
 
@@ -78,12 +95,20 @@ impl<A: Actor> Mailbox<A> {
 }
 
 impl<A: Actor> Caller<A> {
-    pub fn send<M>(&mut self, m: M)
+    pub async fn call<M>(&mut self, m: M) -> M::Return
     where
         A: Handler<M> + Send + 'static,
-        M: Send + 'static,
+        M: Message + Send + 'static,
     {
-        let env = Envelope::new(m);
+        let (s, r) = oneshot::channel();
+        let env = Envelope::new(m, s);
+
         self.s.send(Box::new(env)).unwrap();
+
+        r.await.unwrap()
     }
+}
+
+pub trait Message {
+    type Return: Send;
 }
