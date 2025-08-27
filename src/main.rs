@@ -5,13 +5,12 @@ use tokio::sync::{
     mpsc::{self, UnboundedReceiver, UnboundedSender},
 };
 
-pub trait Actor<T> {
+pub trait Actor {
     type Context;
 
-    fn start(mut self) -> Caller<T>
+    fn start(mut self) -> Caller<Self>
     where
-        Self: Handler<T> + Send + Sized + 'static,
-        T: Send + 'static,
+        Self: Actor<Context = Context<Self>> + Send + Sized + 'static,
     {
         // let mut ctx = Context::new(self);
         let (mut mb, caller) = Mailbox::new();
@@ -19,7 +18,7 @@ pub trait Actor<T> {
         tokio::spawn(async move {
             loop {
                 let r = mb.recv().await;
-                self.handle(r);
+                // self.handle(r);
             }
         });
 
@@ -51,12 +50,12 @@ pub struct Caller<M> {
     s: UnboundedSender<M>,
 }
 
-impl<M> Caller<M> {
+impl<> Caller<M> {
     pub fn new(s: UnboundedSender<M>) -> Self {
         Caller { s }
     }
 
-    pub fn call(&mut self, m: M) {
+    pub fn call<M>(&mut self, m: M) {
         self.s.send(m).unwrap();
     }
 }
@@ -89,16 +88,16 @@ impl Handler<JohnInst> for John {
     }
 }
 
-impl Actor<JohnInst> for John {
+impl Actor for John {
     type Context = John;
 }
 
 #[tokio::main]
 async fn main() {
     let mut john = John { age: 10 };
-    let mut john = john.start();
+    let mut john: Caller<JohnInst> = john.start();
 
-    john.call(JohnInst::Say("hello, my name is john".to_string()));
+    // john.call(JohnInst::Say("hello, my name is john".to_string()));
 
     sleep(Duration::from_secs(1));
 }
