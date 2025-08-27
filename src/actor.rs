@@ -1,5 +1,6 @@
 use std::{fmt::Debug, marker::PhantomData, pin::Pin};
 use tokio::{
+    join,
     sync::{
         Mutex,
         mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -9,9 +10,9 @@ use tokio::{
 };
 
 pub trait Actor {
-    type Context: Sized + Send + 'static;
+    type Context: Sized + Send;
 
-    async fn start(mut self) -> (Caller<Self>, JoinHandle<()>)
+    fn start(mut self) -> (Caller<Self>, JoinHandle<()>)
     where
         Self: Sized + Send + 'static,
     {
@@ -30,30 +31,24 @@ pub trait Actor {
     }
 }
 
+pub type ResponseFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
 pub trait Handler<M>
 where
-    Self: Actor + Sized + Send + 'static,
-    M: Message + Send + 'static,
+    Self: Actor + Sized,
+    M: Message,
 {
-    fn handle(
-        &mut self,
-        m: M,
-        ctx: &mut Context<Self>,
-    ) -> Pin<Box<dyn Future<Output = M::Return> + Send + '_>>;
+    fn handle(&mut self, m: M, ctx: &mut Context<Self>) -> M::Return;
 }
 
 pub trait EnvelopeProxy<A>: Send
 where
-    A: Actor + Send + 'static,
+    A: Actor,
 {
-    fn handle(
-        self: Box<Self>,
-        a: &mut A,
-        ctx: &mut Context<A>,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    fn handle(self: Box<Self>, a: &mut A, ctx: &mut Context<A>);
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct Envelope<A, M>
 where
     M: Message,
@@ -78,18 +73,17 @@ where
 
 impl<A, M> EnvelopeProxy<A> for Envelope<A, M>
 where
-    A: Actor + Handler<M> + Send + 'static,
-    M: Message + Send + 'static,
+    A: Actor + Handler<M> + Send,
+    M: Message + Send,
 {
-    fn handle(
-        self: Box<Self>,
-        a: &mut A,
-        ctx: &mut Context<A>,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        Box::pin(async move {
-            let ret = a.handle(self.m, ctx).await;
-            self.s.send(ret).expect("EnvelopeProxy: return failed");
-        })
+    fn handle(self: Box<Self>, a: &mut A, ctx: &mut Context<A>) {
+        // Box::pin(async move {
+        let ret = a.handle(self.m, ctx);
+        if let Ok(_) = self.s.send(ret) {
+        } else {
+            println!("unwrapeed");
+        }
+        // });
     }
 }
 
@@ -97,12 +91,12 @@ pub struct Mailbox<A: Actor> {
     r: UnboundedReceiver<Box<dyn EnvelopeProxy<A>>>,
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct Caller<A: Actor> {
     s: UnboundedSender<Box<dyn EnvelopeProxy<A>>>,
 }
 
-impl<A: Actor + Send> Mailbox<A> {
+impl<A: Actor> Mailbox<A> {
     pub fn new() -> (Caller<A>, Self) {
         let (s, r) = mpsc::unbounded_channel();
 
@@ -128,25 +122,27 @@ impl<A: Actor> Caller<A> {
         r.await.unwrap()
     }
 
+    // pub fn
+
     pub fn clone(&self) -> Self {
         Caller { s: self.s.clone() }
     }
 }
 
 pub trait Message {
-    type Return: Send + Debug + 'static;
+    type Return: Send;
 }
 
 pub struct Context<A>
 where
-    A: Actor + Send + 'static,
+    A: Actor,
 {
     caller: Caller<A>,
 }
 
 impl<A> Context<A>
 where
-    A: Actor + Send + 'static,
+    A: Actor,
 {
     pub fn new(caller: Caller<A>) -> Self {
         Context { caller }
@@ -155,4 +151,12 @@ where
     pub fn caller(&self) -> Caller<A> {
         self.caller.clone()
     }
+
+    // pub async fn spawn<F, T>(&mut self, fut: F) -> T
+    // where
+    //     F: Future<Output = T> + Send + 'static,
+    //     T: Send + 'static,
+    // {
+    //     join!(tokio::spawn(fut)).0.unwrap()
+    // }
 }

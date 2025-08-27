@@ -4,7 +4,7 @@ use crate::{Actor, Caller, Com, Context, Handler, Message};
 
 pub type Uuid = usize;
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct Core {
     coms: HashMap<Uuid, Caller<Com>>,
     next_uuid: Uuid,
