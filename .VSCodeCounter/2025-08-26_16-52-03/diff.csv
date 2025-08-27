@@ -1,0 +1,7 @@
+"filename", "language", "Rust", "comment", "blank", "total"
+"/workspaces/vnet/src/format.rs", "Rust", 26, 0, 5, 31
+"/workspaces/vnet/src/l2.rs", "Rust", 20, 0, 6, 26
+"/workspaces/vnet/src/l3.rs", "Rust", 26, 0, 10, 36
+"/workspaces/vnet/src/main.rs", "Rust", -46, 0, -17, -63
+"/workspaces/vnet/src/nic.rs", "Rust", -17, -2, -6, -25
+"Total", "-", 9, -2, -2, 5

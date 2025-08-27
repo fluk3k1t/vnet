@@ -77,7 +77,7 @@ impl HasUuid for L2SwHasUuid {
 }
 
 pub struct EthernetCard {
-    mac: MacAddr6,
+    pub mac: MacAddr6,
     com: Com,
     is_promiscuous: bool,
 }
