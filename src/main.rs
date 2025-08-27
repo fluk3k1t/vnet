@@ -1,33 +1,38 @@
 use once_cell::sync::Lazy;
 use std::{marker::PhantomData, sync::Arc, thread::sleep, time::Duration};
-use tokio::sync::{
-    Mutex,
-    mpsc::{self, UnboundedReceiver, UnboundedSender},
+use tokio::{
+    sync::{
+        Mutex,
+        mpsc::{self, UnboundedReceiver, UnboundedSender},
+    },
+    task::JoinHandle,
 };
 
-pub trait Actor {
+pub trait Actor<T> {
     type Context;
 
-    fn start(mut self) -> Caller<Self>
+    fn start(mut self) -> (Caller<T>, JoinHandle<T>)
     where
-        Self: Actor<Context = Context<Self>> + Send + Sized + 'static,
+        Self: Handler<T> + Send + Sized + 'static,
+        T: Send + 'static,
     {
         // let mut ctx = Context::new(self);
         let (mut mb, caller) = Mailbox::new();
+        let mut ctx = Context::new(caller.clone());
 
-        tokio::spawn(async move {
+        let join = tokio::spawn(async move {
             loop {
                 let r = mb.recv().await;
-                // self.handle(r);
+                Handler::handle(&mut self, r, &mut ctx);
             }
         });
 
-        caller
+        (caller, join)
     }
 }
 
 pub trait Handler<M> {
-    fn handle(&mut self, m: M);
+    fn handle(&mut self, m: M, ctx: &mut Context<M>);
 }
 
 pub struct Mailbox<M> {
@@ -50,24 +55,34 @@ pub struct Caller<M> {
     s: UnboundedSender<M>,
 }
 
-impl<> Caller<M> {
+impl<M> Caller<M> {
     pub fn new(s: UnboundedSender<M>) -> Self {
         Caller { s }
     }
 
-    pub fn call<M>(&mut self, m: M) {
+    pub fn call(&mut self, m: M) {
         self.s.send(m).unwrap();
+    }
+
+    pub fn clone(&self) -> Self {
+        Caller { s: self.s.clone() }
     }
 }
 
 pub struct Context<T> {
-    st: T,
+    caller: Caller<T>,
 }
 
 impl<T> Context<T> {
-    pub fn new(st: T) -> Self {
-        Context { st }
+    pub fn new(caller: Caller<T>) -> Self {
+        Context { caller }
     }
+
+    pub fn recall(&mut self, m: T) {
+        self.caller.call(m);
+    }
+
+    pub fn finish(&mut self) {}
 }
 
 pub struct John {
@@ -76,28 +91,33 @@ pub struct John {
 
 pub enum JohnInst {
     Say(String),
+    Finish,
 }
 
 impl Handler<JohnInst> for John {
-    fn handle(&mut self, m: JohnInst) {
+    fn handle(&mut self, m: JohnInst, ctx: &mut Context<JohnInst>) {
         println!("handle");
 
         match m {
-            JohnInst::Say(c) => println!("say {}", c),
+            JohnInst::Say(c) => {
+                println!("say {}", c);
+                ctx.recall(JohnInst::Finish);
+            }
+            JohnInst::Finish => println!("im finished"),
         }
     }
 }
 
-impl Actor for John {
+impl Actor<JohnInst> for John {
     type Context = John;
 }
 
 #[tokio::main]
 async fn main() {
     let mut john = John { age: 10 };
-    let mut john: Caller<JohnInst> = john.start();
+    let (mut john, join) = john.start();
 
-    // john.call(JohnInst::Say("hello, my name is john".to_string()));
+    john.call(JohnInst::Say("hello, my name is john".to_string()));
 
-    sleep(Duration::from_secs(1));
+    join.await;
 }
