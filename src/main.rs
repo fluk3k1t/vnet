@@ -1,70 +1,104 @@
 use once_cell::sync::Lazy;
-use std::{marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc, thread::sleep, time::Duration};
 use tokio::sync::{
     Mutex,
     mpsc::{self, UnboundedReceiver, UnboundedSender},
 };
 
-pub struct Core {}
+pub trait Actor<T> {
+    type Context;
 
-static CORE: Lazy<Arc<Mutex<Core>>> = Lazy::new(|| Arc::new(Mutex::new(Core {})));
-
-pub trait Reactor {
-    type Message: Send + 'static;
-    type Context: Send + 'static + DefaultValue;
-
-    fn start(self) -> UnboundedSender<Self::Message>
+    fn start(mut self) -> Caller<T>
     where
-        Self: Send + 'static + Sized + Handler<Self::Message, Self::Context>,
+        Self: Handler<T> + Send + Sized + 'static,
+        T: Send + 'static,
     {
-        let (s, mut r) = mpsc::unbounded_channel();
-        let mut ctx: Self::Context = Self::Context::default_value();
+        // let mut ctx = Context::new(self);
+        let (mut mb, caller) = Mailbox::new();
 
         tokio::spawn(async move {
             loop {
-                let r: Self::Message = r.recv().await.unwrap();
-
-                self.handle(r, &mut ctx);
+                let r = mb.recv().await;
+                self.handle(r);
             }
         });
 
-        s
+        caller
     }
 }
 
-pub trait DefaultValue {
-    fn default_value() -> Self;
+pub trait Handler<M> {
+    fn handle(&mut self, m: M);
 }
 
-pub trait Handler<M, C> {
-    fn handle(&self, m: M, ctx: &mut C);
+pub struct Mailbox<M> {
+    r: UnboundedReceiver<M>,
 }
 
-pub struct Caller {}
+impl<M> Mailbox<M> {
+    pub fn new() -> (Self, Caller<M>) {
+        let (s, r) = mpsc::unbounded_channel();
 
-pub struct MrJohn;
+        (Mailbox { r }, Caller::new(s))
+    }
 
-pub struct MrJohnSt {}
-
-pub enum Inst {}
-
-impl Handler<Inst, MrJohnSt> for MrJohn {
-    fn handle(&self, m: Inst, ctx: &mut MrJohnSt) {}
-}
-
-impl DefaultValue for MrJohnSt {
-    fn default_value() -> Self {
-        MrJohnSt {}
+    pub async fn recv(&mut self) -> M {
+        self.r.recv().await.unwrap()
     }
 }
 
-impl Reactor for MrJohn {
-    type Context = MrJohnSt;
-    type Message = Inst;
+pub struct Caller<M> {
+    s: UnboundedSender<M>,
 }
 
-fn main() {
-    // let mut mrjohn = MrJohn {};
-    // mrjohn.start();
-    MrJohn.start();
+impl<M> Caller<M> {
+    pub fn new(s: UnboundedSender<M>) -> Self {
+        Caller { s }
+    }
+
+    pub fn call(&mut self, m: M) {
+        self.s.send(m).unwrap();
+    }
+}
+
+pub struct Context<T> {
+    st: T,
+}
+
+impl<T> Context<T> {
+    pub fn new(st: T) -> Self {
+        Context { st }
+    }
+}
+
+pub struct John {
+    pub age: usize,
+}
+
+pub enum JohnInst {
+    Say(String),
+}
+
+impl Handler<JohnInst> for John {
+    fn handle(&mut self, m: JohnInst) {
+        println!("handle");
+
+        match m {
+            JohnInst::Say(c) => println!("say {}", c),
+        }
+    }
+}
+
+impl Actor<JohnInst> for John {
+    type Context = John;
+}
+
+#[tokio::main]
+async fn main() {
+    let mut john = John { age: 10 };
+    let mut john = john.start();
+
+    john.call(JohnInst::Say("hello, my name is john".to_string()));
+
+    sleep(Duration::from_secs(1));
 }
