@@ -28,7 +28,7 @@ async fn main() {
         MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01),
     );
 
-    let l2sw = L2Sw::new(core.clone(), 2);
+    let l2sw = L2Sw::new(core.clone(), 2).await;
 
     core.connect(&eth0, &l2sw.port(0).await.unwrap()).await;
     core.connect(&eth1, &l2sw.port(1).await.unwrap()).await;
