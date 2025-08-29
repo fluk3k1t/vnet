@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use actix::prelude::*;
 use tokio::{net::unix::pipe::Receiver, sync::Mutex};
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::{EndPoint, EthernetFrame, OnReceive};
 
@@ -26,18 +26,16 @@ impl Core {
         self.addr.send(CreateEndPoint { on_receive }).await.unwrap()
     }
 
-    pub async fn send(&self, uuid: Uuid, payload: EthernetFrame) {
-        self.addr.send(Send { uuid, payload }).await.unwrap()
+    pub fn send(&self, uuid: Uuid, payload: EthernetFrame) {
+        self.addr.do_send(Send { uuid, payload });
     }
 
-    pub async fn connect<E: Connectable>(&self, e0: E, e1: E) {
-        self.addr
-            .send(Connect {
-                e0: e0.uuid(),
-                e1: e1.uuid(),
-            })
-            .await
-            .unwrap();
+    #[instrument(skip(self, e0, e1))]
+    pub async fn connect<E0: Connectable, E1: Connectable>(&self, e0: &E0, e1: &E1) {
+        self.addr.do_send(Connect {
+            e0: e0.uuid().await,
+            e1: e1.uuid().await,
+        });
     }
 }
 
@@ -105,8 +103,10 @@ impl Handler<Send> for CoreRaw {
 
         Box::pin(async move {
             if let Some(targets) = connections.lock().await.get(&msg.uuid) {
+                debug!("send to");
                 for target in targets.iter() {
                     if let Some(target_ep) = endpoints.lock().await.get_mut(target) {
+                        debug!("target {:?} {}", target_ep, target_ep.uuid().await);
                         target_ep.write(msg.payload.clone()).await;
                     }
                 }
@@ -125,7 +125,10 @@ struct Connect {
 impl Handler<Connect> for CoreRaw {
     type Result = ResponseFuture<()>;
 
+    #[instrument(skip(self, ctx))]
     fn handle(&mut self, msg: Connect, ctx: &mut Self::Context) -> Self::Result {
+        info!("connected {} between {}", msg.e0, msg.e1);
+
         let connections = self.connections.clone();
 
         Box::pin(async move {
@@ -147,5 +150,5 @@ impl Handler<Connect> for CoreRaw {
 }
 
 pub trait Connectable {
-    fn uuid(&self) -> Uuid;
+    async fn uuid(&self) -> Uuid;
 }

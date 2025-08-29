@@ -15,4 +15,6 @@ impl EthernetFrame {
 }
 
 #[derive(Debug, Clone, MessageResponse)]
-pub enum EthernetFrameType {}
+pub enum EthernetFrameType {
+    Dummy,
+}

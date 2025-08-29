@@ -1,4 +1,6 @@
 use actix::{dev::MessageResponse, prelude::*};
+use tracing::debug;
+use tracing_subscriber::field::debug;
 
 use crate::{Core, EthernetFrame, Uuid};
 
@@ -19,13 +21,21 @@ impl EndPoint {
         self.addr.send(GetUuid).await.unwrap()
     }
 
-    pub async fn send(&self, payload: EthernetFrame) {
-        self.addr.send(Send(payload)).await.unwrap();
+    pub fn send(&self, payload: EthernetFrame) {
+        // debug!("")
+        self.addr.do_send(Send(payload));
     }
 
     pub async fn write(&self, payload: EthernetFrame) {
         self.addr.send(Write(payload)).await.unwrap();
     }
+}
+
+#[derive(MessageResponse)]
+struct EndPointRaw {
+    uuid: Uuid,
+    core: Core,
+    on_receive: Recipient<OnReceive>,
 }
 
 impl Actor for EndPointRaw {
@@ -42,15 +52,11 @@ impl EndPointRaw {
     }
 }
 
-#[derive(Message)]
+#[derive(Message, Debug)]
 #[rtype(result = "()")]
-pub struct OnReceive(pub EthernetFrame);
-
-#[derive(MessageResponse)]
-struct EndPointRaw {
-    uuid: Uuid,
-    core: Core,
-    on_receive: Recipient<OnReceive>,
+pub struct OnReceive {
+    pub dst: Uuid,
+    pub payload: EthernetFrame,
 }
 
 #[derive(Message)]
@@ -69,15 +75,13 @@ impl Handler<GetUuid> for EndPointRaw {
 struct Send(EthernetFrame);
 
 impl Handler<Send> for EndPointRaw {
-    type Result = ResponseFuture<()>;
+    type Result = ();
 
     fn handle(&mut self, msg: Send, ctx: &mut Self::Context) -> Self::Result {
         let core = self.core.clone();
         let uuid = self.uuid;
 
-        Box::pin(async move {
-            core.send(uuid, msg.0).await;
-        })
+        core.send(uuid, msg.0);
     }
 }
 
@@ -90,9 +94,14 @@ impl Handler<Write> for EndPointRaw {
 
     fn handle(&mut self, msg: Write, ctx: &mut Self::Context) -> Self::Result {
         let on_receive = self.on_receive.clone();
+        let uuid = self.uuid;
 
         Box::pin(async move {
-            on_receive.send(OnReceive(msg.0)).await.unwrap();
+            debug!("sen on receive {:?} {:?}", on_receive, msg.0);
+            on_receive.do_send(OnReceive {
+                payload: msg.0,
+                dst: uuid,
+            });
         })
     }
 }
