@@ -1,55 +1,151 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::{Actor, Caller, Com, Context, Handler, Message};
+use actix::prelude::*;
+use tokio::{net::unix::pipe::Receiver, sync::Mutex};
+use tracing::{info, instrument};
+
+use crate::{EndPoint, EthernetFrame, OnReceive};
 
 pub type Uuid = usize;
 
-// #[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Core {
-    coms: HashMap<Uuid, Caller<Com>>,
-    next_uuid: Uuid,
+    addr: Addr<CoreRaw>,
 }
 
 impl Core {
     pub fn new() -> Self {
+        let core_raw = CoreRaw::new();
+
         Core {
-            coms: HashMap::new(),
+            addr: core_raw.start(),
+        }
+    }
+
+    pub async fn create_ep(&self, on_receive: Recipient<OnReceive>) -> EndPoint {
+        self.addr.send(CreateEndPoint { on_receive }).await.unwrap()
+    }
+
+    pub async fn send(&self, uuid: Uuid, payload: EthernetFrame) {
+        self.addr.send(Send { uuid, payload }).await.unwrap()
+    }
+
+    pub async fn connect<E: Connectable>(&self, e0: E, e1: E) {
+        self.addr
+            .send(Connect {
+                e0: e0.uuid(),
+                e1: e1.uuid(),
+            })
+            .await
+            .unwrap();
+    }
+}
+
+#[derive(Debug)]
+struct CoreRaw {
+    next_uuid: Uuid,
+    endpoints: Arc<Mutex<HashMap<Uuid, EndPoint>>>,
+    connections: Arc<Mutex<HashMap<Uuid, Vec<Uuid>>>>,
+}
+
+impl Actor for CoreRaw {
+    type Context = Context<Self>;
+}
+
+impl CoreRaw {
+    fn new() -> Self {
+        CoreRaw {
             next_uuid: 0,
+            endpoints: Arc::new(Mutex::new(HashMap::new())),
+            connections: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
 
-impl Handler<CreateCom> for Core {
-    fn handle(&mut self, m: CreateCom, ctx: &mut Context<Self>) -> Caller<Com> {
-        let (com, _) = Com::new(self.next_uuid, ctx.caller()).start();
-        self.coms.insert(self.next_uuid, com.clone());
+#[derive(Message, Debug)]
+#[rtype(EndPoint)]
+struct CreateEndPoint {
+    on_receive: Recipient<OnReceive>,
+}
 
+impl Handler<CreateEndPoint> for CoreRaw {
+    type Result = ResponseFuture<EndPoint>;
+
+    #[instrument(skip(self, ctx))]
+    fn handle(&mut self, msg: CreateEndPoint, ctx: &mut Self::Context) -> Self::Result {
+        info!("created 'EndPoint' with uuid = {}", self.next_uuid);
+
+        let endpoints = self.endpoints.clone();
+        let me = ctx.address();
+        let uuid = self.next_uuid;
         self.next_uuid += 1;
 
-        com
+        Box::pin(async move {
+            // TODO: Coreが持つのとUserに持たせるepは違うものにする
+            let ep = EndPoint::new(Core { addr: me }, uuid, msg.on_receive);
+            endpoints.lock().await.insert(uuid, ep.clone());
+            ep
+        })
     }
 }
 
-impl Handler<Greet> for Core {
-    fn handle(&mut self, m: Greet, ctx: &mut Context<Self>) -> <Greet as Message>::Return {
-        println!("core greet {}", m.content);
+#[derive(Message, MessageResponse, Debug)]
+#[rtype(result = "()")]
+struct Send {
+    pub uuid: Uuid,
+    pub payload: EthernetFrame,
+}
+
+impl Handler<Send> for CoreRaw {
+    type Result = ResponseFuture<()>;
+
+    fn handle(&mut self, msg: Send, ctx: &mut Self::Context) -> Self::Result {
+        let connections = self.connections.clone();
+        let endpoints = self.endpoints.clone();
+
+        Box::pin(async move {
+            if let Some(targets) = connections.lock().await.get(&msg.uuid) {
+                for target in targets.iter() {
+                    if let Some(target_ep) = endpoints.lock().await.get_mut(target) {
+                        target_ep.write(msg.payload.clone()).await;
+                    }
+                }
+            }
+        })
     }
 }
 
-impl Actor for Core {
-    type Context = Self;
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+struct Connect {
+    e0: Uuid,
+    e1: Uuid,
 }
 
-pub struct CreateCom;
+impl Handler<Connect> for CoreRaw {
+    type Result = ResponseFuture<()>;
 
-impl Message for CreateCom {
-    type Return = Caller<Com>;
+    fn handle(&mut self, msg: Connect, ctx: &mut Self::Context) -> Self::Result {
+        let connections = self.connections.clone();
+
+        Box::pin(async move {
+            connections
+                .lock()
+                .await
+                .entry(msg.e0)
+                .and_modify(|tbl| tbl.push(msg.e1))
+                .or_insert(vec![msg.e1]);
+
+            connections
+                .lock()
+                .await
+                .entry(msg.e1)
+                .and_modify(|tbl| tbl.push(msg.e0))
+                .or_insert(vec![msg.e0]);
+        })
+    }
 }
 
-pub struct Greet {
-    pub content: String,
-}
-
-impl Message for Greet {
-    type Return = ();
+pub trait Connectable {
+    fn uuid(&self) -> Uuid;
 }

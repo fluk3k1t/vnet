@@ -1,0 +1,98 @@
+use actix::{dev::MessageResponse, prelude::*};
+
+use crate::{Core, EthernetFrame, Uuid};
+
+#[derive(MessageResponse, Clone, Debug)]
+pub struct EndPoint {
+    addr: Addr<EndPointRaw>,
+}
+
+impl EndPoint {
+    pub fn new(core: Core, uuid: Uuid, on_receive: Recipient<OnReceive>) -> Self {
+        let ep_raw = EndPointRaw::new(core, uuid, on_receive);
+        EndPoint {
+            addr: ep_raw.start(),
+        }
+    }
+
+    pub async fn uuid(&self) -> Uuid {
+        self.addr.send(GetUuid).await.unwrap()
+    }
+
+    pub async fn send(&self, payload: EthernetFrame) {
+        self.addr.send(Send(payload)).await.unwrap();
+    }
+
+    pub async fn write(&self, payload: EthernetFrame) {
+        self.addr.send(Write(payload)).await.unwrap();
+    }
+}
+
+impl Actor for EndPointRaw {
+    type Context = Context<Self>;
+}
+
+impl EndPointRaw {
+    fn new(core: Core, uuid: Uuid, on_receive: Recipient<OnReceive>) -> Self {
+        EndPointRaw {
+            uuid,
+            core,
+            on_receive,
+        }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct OnReceive(EthernetFrame);
+
+#[derive(MessageResponse)]
+struct EndPointRaw {
+    uuid: Uuid,
+    core: Core,
+    on_receive: Recipient<OnReceive>,
+}
+
+#[derive(Message)]
+#[rtype(Uuid)]
+struct GetUuid;
+
+impl Handler<GetUuid> for EndPointRaw {
+    type Result = Uuid;
+    fn handle(&mut self, msg: GetUuid, ctx: &mut Self::Context) -> Self::Result {
+        self.uuid
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct Send(EthernetFrame);
+
+impl Handler<Send> for EndPointRaw {
+    type Result = ResponseFuture<()>;
+
+    fn handle(&mut self, msg: Send, ctx: &mut Self::Context) -> Self::Result {
+        let core = self.core.clone();
+        let uuid = self.uuid;
+
+        Box::pin(async move {
+            core.send(uuid, msg.0).await;
+        })
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct Write(EthernetFrame);
+
+impl Handler<Write> for EndPointRaw {
+    type Result = ResponseFuture<()>;
+
+    fn handle(&mut self, msg: Write, ctx: &mut Self::Context) -> Self::Result {
+        let on_receive = self.on_receive.clone();
+
+        Box::pin(async move {
+            on_receive.send(OnReceive(msg.0)).await.unwrap();
+        })
+    }
+}

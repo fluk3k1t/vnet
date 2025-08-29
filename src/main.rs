@@ -1,24 +1,21 @@
-use std::{thread::sleep, time::Duration};
+use actix::prelude::*;
+use tracing::{Level, debug};
+use vnet::Core;
 
-use tokio::{io::join, join};
-use vnet::{Actor, Core, CreateCom, Handler, Send};
-
-#[tokio::main]
+#[actix::main]
 async fn main() {
-    let (mut core, core_join) = Core::new().start();
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_names(true)
+        .with_level(true)
+        .with_max_level(Level::DEBUG)
+        .init();
 
-    tokio::spawn(async move {
-        let mut com = core.call(CreateCom).await;
-        // println!("{:?}", com);
+    let mut core = Core::new();
 
-        let r = com
-            .call(Send {
-                payload: "hello from main loop".to_string(),
-            })
-            .await
-            .await;
-        println!("{}", r);
-    });
+    // let mut com = core.create_ep().await;
 
-    sleep(Duration::from_secs(1));
+    // com.send().await;
 }
