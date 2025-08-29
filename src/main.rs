@@ -1,50 +1,77 @@
-use std::time::Duration;
+use once_cell::sync::Lazy;
+use std::{marker::PhantomData, sync::Arc};
+use tokio::sync::{
+    Mutex,
+    mpsc::{self, UnboundedReceiver, UnboundedSender},
+};
 
-use actix::prelude::*;
-use macaddr::MacAddr6;
-use tokio::{join, time::sleep};
-use tracing::{Level, debug};
-use vnet::{Core, EthernetCard, EthernetFrameType, L2Sw};
+pub struct Core {}
 
-#[actix::main]
+static CORE: Lazy<Arc<Mutex<Core>>> = Lazy::new(|| Arc::new(Mutex::new(Core {})));
+
+pub trait Reactor {
+    type Message: Send + 'static;
+    type Context: Send + 'static + DefaultValue;
+
+    fn start(self) -> UnboundedSender<Self::Message>
+    where
+        Self: Send + 'static + Sized + Handler<Self::Message, Self::Context>,
+    {
+        let (s, mut r) = mpsc::unbounded_channel();
+        let mut ctx: Self::Context = Self::Context::default_value();
+
+        tokio::spawn(async move {
+            while let Some(r) = r.recv().await {
+                self.handle(r, &mut ctx).await;
+            }
+        });
+
+        s
+    }
+}
+
+pub trait DefaultValue {
+    fn default_value() -> Self;
+}
+
+pub trait Handler<M, C> {
+    fn handle(&mut self, m: M, ctx: &mut C) -> impl std::future::Future<Output = ()> + Send;
+}
+
+pub struct Caller {}
+
+pub struct MrJohn;
+
+pub struct MrJohnSt {
+    age: usize,
+}
+
+#[derive(Debug)]
+pub enum Inst {
+    Dm,
+}
+
+impl Handler<Inst, MrJohnSt> for MrJohn {
+    async fn handle(&mut self, m: Inst, ctx: &mut MrJohnSt) {
+        println!("handle {:?}", m);
+    }
+}
+
+impl DefaultValue for MrJohnSt {
+    fn default_value() -> Self {
+        MrJohnSt { age: 0 }
+    }
+}
+
+impl Reactor for MrJohn {
+    type Context = MrJohnSt;
+    type Message = Inst;
+}
+
+#[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_file(true)
-        .with_line_number(true)
-        .with_thread_names(true)
-        .with_level(true)
-        .with_max_level(Level::DEBUG)
-        .init();
-
-    let mut core = Core::new();
-
-    let eth0 = EthernetCard::new(
-        core.clone(),
-        MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
-    );
-
-    let eth1 = EthernetCard::new(
-        core.clone(),
-        MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01),
-    );
-
-    let l2sw = L2Sw::new(core.clone(), 2).await;
-
-    core.connect(&eth0, &l2sw.port(0).await.unwrap()).await;
-    core.connect(&eth1, &l2sw.port(1).await.unwrap()).await;
-
-    let j1 = tokio::spawn(async move {
-        eth0.send(
-            MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01),
-            EthernetFrameType::Dummy,
-        );
-    });
-
-    let j2 = tokio::spawn(async move {
-        sleep(Duration::from_secs(1)).await;
-        let r = eth1.recv().await;
-        println!("{:?}", r);
-    });
-
-    join!(j2);
+    // let mut mrjohn = MrJohn {};
+    // mrjohn.start();
+    let mut mrjohn = MrJohn.start();
+    mrjohn.send(Inst::Dm).unwrap();
 }
