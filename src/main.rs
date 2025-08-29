@@ -19,10 +19,12 @@ pub trait Reactor {
     {
         let (s, mut r) = mpsc::unbounded_channel();
         let mut ctx: Self::Context = Self::Context::default_value();
+        let self_mutex = Arc::new(Mutex::new(self));
 
         tokio::spawn(async move {
             while let Some(r) = r.recv().await {
-                self.handle(r, &mut ctx).await;
+                let mut sel = self_mutex.lock().await;
+                sel.handle(r, &mut ctx).await;
             }
         });
 
