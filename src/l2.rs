@@ -89,6 +89,16 @@ impl Connectable for Port {
     }
 }
 
+// 同じアクターでもメッセージレベルで並列だからハンドラごとにFutureが必要
+// そしてユーザーはそんなものを求めていなくて、事実ステートをArcにする煩雑さが生じている
+// というか俺のケースだとメッセージひとつひとつが時間のかかる処理ではないのでメッセージが並列である意味がなく、Arcのメンドサだけが強調されてしまう
+// シミュレーション用のオブジェクト指向はactor modelより良いものがありそう
+// それもあるし、一番の原因はstartedとかでasyncな処理をする必要（create_epなど）があって、それでselfを更新するにはarcが必要だから
+// でendpointのようなアクターにするほどでもない通信路をアクターにしてしまっているから、create_epが非同期になって？？？
+// いや関係ないか、coreにコールする時点でasyncにはなる、、、
+// startedに初期化を委譲しなくてもいいようにendpointを設計しよう
+// いやon receive形式な時点でactorが起動するまでreceipientを取得できないのでそんなものは不可能
+// listen(endpoint)的なものがあれば理想的
 impl Handler<OnReceive> for L2SwRaw {
     type Result = ResponseFuture<()>;
 
