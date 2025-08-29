@@ -44,7 +44,7 @@ impl EndPointRaw {
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct OnReceive(EthernetFrame);
+pub struct OnReceive(pub EthernetFrame);
 
 #[derive(MessageResponse)]
 struct EndPointRaw {
