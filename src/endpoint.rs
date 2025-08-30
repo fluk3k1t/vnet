@@ -22,7 +22,6 @@ impl EndPoint {
     }
 
     pub fn send(&self, payload: EthernetFrame) {
-        // debug!("")
         self.addr.do_send(Send(payload));
     }
 

@@ -1,7 +1,7 @@
 use actix::prelude::*;
 use macaddr::MacAddr6;
 
-#[derive(Debug, Clone, MessageResponse)]
+#[derive(Debug, Clone, MessageResponse, PartialEq, Eq)]
 pub struct EthernetFrame {
     pub dst: MacAddr6,
     pub src: MacAddr6,
@@ -14,7 +14,7 @@ impl EthernetFrame {
     }
 }
 
-#[derive(Debug, Clone, MessageResponse)]
+#[derive(Debug, Clone, MessageResponse, PartialEq, Eq)]
 pub enum EthernetFrameType {
     Dummy,
 }
