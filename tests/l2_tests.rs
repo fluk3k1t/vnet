@@ -9,13 +9,13 @@ async fn test_l2_connected() {
     let core = Core::new();
 
     let eth0_mac = MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
-    let eth0 = EthernetCard::new(core.clone(), eth0_mac);
+    let eth0 = EthernetCard::new(core.clone(), eth0_mac, false);
 
     let eth1_mac = MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01);
-    let eth1 = EthernetCard::new(core.clone(), eth1_mac);
+    let eth1 = EthernetCard::new(core.clone(), eth1_mac, false);
 
     let eth2_mac = MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x02);
-    let eth2 = EthernetCard::new(core.clone(), eth2_mac);
+    let eth2 = EthernetCard::new(core.clone(), eth2_mac, false);
 
     let l2sw = L2Sw::new(core.clone(), 3);
 

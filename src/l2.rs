@@ -44,7 +44,6 @@ impl Actor for L2SwRaw {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        debug!("started");
         let me = ctx.address();
         let on_receive = me.clone().recipient();
         let core = self.core.clone();
@@ -138,14 +137,15 @@ impl Handler<GetPort> for L2SwRaw {
     }
 }
 
+#[derive(Clone)]
 pub struct EthernetCard {
     addr: Addr<EthernetCardRaw>,
 }
 
 impl EthernetCard {
-    pub fn new(core: Core, mac: MacAddr6) -> Self {
+    pub fn new(core: Core, mac: MacAddr6, is_promiscuous: bool) -> Self {
         EthernetCard {
-            addr: EthernetCardRaw::new(core, mac).start(),
+            addr: EthernetCardRaw::new(core, mac, is_promiscuous).start(),
         }
     }
 
@@ -169,15 +169,17 @@ struct EthernetCardRaw {
     ep: Arc<Mutex<Option<EndPoint>>>,
     core: Core,
     rx_buffer: VecDeque<EthernetFrame>,
+    is_promiscuous: bool,
 }
 
 impl EthernetCardRaw {
-    fn new(core: Core, mac: MacAddr6) -> Self {
+    fn new(core: Core, mac: MacAddr6, is_promiscuous: bool) -> Self {
         EthernetCardRaw {
             ep: Arc::new(Mutex::new(None)),
             mac,
             core,
             rx_buffer: VecDeque::new(),
+            is_promiscuous,
         }
     }
 }
@@ -194,7 +196,6 @@ impl Actor for EthernetCardRaw {
             async move {
                 let created_ep = core.create_ep(on_receive).await;
                 let _ = ep.lock().await.replace(created_ep);
-                debug!("ethernet card raw init");
             }
             .into_actor(self),
         );
@@ -205,7 +206,6 @@ impl Handler<OnReceive> for EthernetCardRaw {
     type Result = ();
 
     fn handle(&mut self, msg: OnReceive, ctx: &mut Self::Context) -> Self::Result {
-        debug!("l2 on receive {:?}", msg);
         self.rx_buffer.push_back(msg.payload);
     }
 }
@@ -240,10 +240,9 @@ impl Handler<EthernetCardRawRecv> for EthernetCardRaw {
     type Result = Option<EthernetFrame>;
 
     fn handle(&mut self, msg: EthernetCardRawRecv, ctx: &mut Self::Context) -> Self::Result {
-        debug!("received but");
         let ef = self.rx_buffer.pop_front()?;
 
-        if ef.dst == self.mac {
+        if ef.dst == self.mac || self.is_promiscuous {
             return Some(ef);
         }
 

@@ -96,7 +96,6 @@ impl Handler<Write> for EndPointRaw {
         let uuid = self.uuid;
 
         Box::pin(async move {
-            debug!("sen on receive {:?} {:?}", on_receive, msg.0);
             on_receive.do_send(OnReceive {
                 payload: msg.0,
                 dst: uuid,
