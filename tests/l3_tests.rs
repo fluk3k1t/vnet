@@ -1,23 +1,14 @@
 use std::{net::Ipv4Addr, time::Duration};
 
-use actix::prelude::*;
 use macaddr::MacAddr6;
-use tokio::{join, time::sleep};
-use tracing::{Level, debug};
+use tokio::time::sleep;
 use vnet::{
-    Core, EthernetCard, EthernetFrameType, IPv4PacketType, L2Sw, NetworkCard, NetworkDriver,
+    Core, EthernetCard, EthernetFrame, EthernetFrameType, IPv4PacketType, L2Sw, NetworkCard,
+    NetworkDriver,
 };
 
-#[actix::main]
-async fn main() {
-    tracing_subscriber::fmt()
-        .with_file(true)
-        .with_line_number(true)
-        .with_thread_names(true)
-        .with_level(true)
-        .with_max_level(Level::TRACE)
-        .init();
-
+#[actix::test]
+async fn test_l3_arp() {
     let core = Core::new();
 
     let nic0 = NetworkCard::new(
@@ -49,6 +40,5 @@ async fn main() {
     sleep(Duration::from_millis(10)).await;
 
     let r = nth1.recv().await;
-    // assert_eq!(r, None);
-    println!("{:?}", r);
+    assert_eq!(r, None);
 }

@@ -98,6 +98,7 @@ impl Connectable for Port {
 // startedに初期化を委譲しなくてもいいようにendpointを設計しよう
 // いやon receive形式な時点でactorが起動するまでreceipientを取得できないのでそんなものは不可能
 // listen(endpoint)的なものがあれば理想的
+// Uuidみたいなメンバー変数をゲットするためにいちいちgetterを書いてるのオブジェクト指向の典型的な失敗と呼ばれているやつぅ
 impl Handler<OnReceive> for L2SwRaw {
     type Result = ResponseFuture<()>;
 
@@ -108,11 +109,8 @@ impl Handler<OnReceive> for L2SwRaw {
                 // msg.dst == 受け取ったポートのUuid
                 // 受信したポート以外のポートから送信する
                 if port.uuid().await != msg.dst {
-                    debug!("l2 {:?}", port.ep.uuid().await);
                     port.ep.send(msg.payload.clone());
                 }
-
-                debug!("l2 switch send");
             }
         })
     }
@@ -155,6 +153,10 @@ impl EthernetCard {
 
     pub async fn recv(&self) -> Option<EthernetFrame> {
         self.addr.send(EthernetCardRawRecv {}).await.unwrap()
+    }
+
+    pub async fn uuid(&self) -> Uuid {
+        self.addr.send(EthernetCardRawGetUuid {}).await.unwrap()
     }
 }
 
@@ -206,6 +208,7 @@ impl Handler<OnReceive> for EthernetCardRaw {
     type Result = ();
 
     fn handle(&mut self, msg: OnReceive, ctx: &mut Self::Context) -> Self::Result {
+        debug!("ethernet card on receive");
         self.rx_buffer.push_back(msg.payload);
     }
 }
@@ -242,7 +245,7 @@ impl Handler<EthernetCardRawRecv> for EthernetCardRaw {
     fn handle(&mut self, msg: EthernetCardRawRecv, ctx: &mut Self::Context) -> Self::Result {
         let ef = self.rx_buffer.pop_front()?;
 
-        if ef.dst == self.mac || self.is_promiscuous {
+        if ef.dst == self.mac || self.is_promiscuous || ef.dst.is_broadcast() {
             return Some(ef);
         }
 

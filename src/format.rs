@@ -71,4 +71,18 @@ impl ArpPacket {
             src_ip: self_ip,
         }
     }
+
+    pub fn mk_request(
+        target_ip: Ipv4Addr,
+        self_ip: Ipv4Addr,
+        self_mac: MacAddr6,
+    ) -> Self {
+        ArpPacket {
+            op: ArpOperation::Request,
+            dst_mac: MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
+            dst_ip: target_ip,
+            src_mac: self_mac,
+            src_ip: self_ip,
+        }
+    }
 }
