@@ -1,323 +1,193 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    iter::repeat_with,
-    net::Ipv4Addr,
-    ops::Index,
-    sync::Arc,
-};
-
-use actix::prelude::*;
-use futures::future::join_all;
-use macaddr::MacAddr6;
-use tokio::sync::Mutex;
-use tracing::{debug, instrument, trace};
+use std::collections::{HashMap, VecDeque};
+use std::net::Ipv4Addr;
+use std::usize;
 
 use crate::{
-    ArpOperation, ArpPacket, Connectable, Core, EndPoint, EthernetCard, EthernetFrame,
-    EthernetFrameType, IPv4Packet, IPv4PacketType, OnReceive, Uuid,
+    ArpOperation, ArpPacket, Core, EthernetCard, EthernetFrame, EthernetFrameType, IPv4Packet,
+    IPv4PacketType, OnReceive, Uuid, handle_arp,
 };
+use macaddr::MacAddr6;
+use ractor::concurrency::mpsc_unbounded;
+use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort, call, cast};
+use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
+use tracing::debug;
 
-#[derive(Clone)]
-pub struct NetworkCard {
-    addr: Addr<NetworkCardRaw>,
+pub struct NetworkInterfaceCard {
+    addr: ActorRef<NetworkInterfaceCardMsg>,
     ip: Ipv4Addr,
     mac: MacAddr6,
 }
 
-pub struct NetworkCardBuilder {
-    ip: Ipv4Addr,
-    core: Core,
-    mac: MacAddr6,
-    is_promiscuous: bool,
-}
-
-impl NetworkCard {
-    pub fn new(core: Core, ip: Ipv4Addr, mac: MacAddr6) -> NetworkCardBuilder {
-        NetworkCardBuilder {
-            core,
-            ip,
-            mac,
-            is_promiscuous: false,
-        }
-    }
-
-    #[instrument(skip(self))]
-    pub fn send(&self, dst: MacAddr6, payload: EthernetFrameType) {
-        self.addr.do_send(NetworkCardRawSend { dst, payload });
-    }
-
-    #[instrument(skip(self))]
-    pub async fn recv(&self) -> Option<EthernetFrame> {
-        self.addr.send(NetworkCardRawRecv).await.unwrap()
-    }
-
-    pub async fn uuid(&self) -> Uuid {
-        self.addr.send(NetworkCardRawGetUuid).await.unwrap()
-    }
-}
-
-impl NetworkCardBuilder {
-    pub fn promiscuous(mut self, is_promiscuous: bool) -> Self {
-        self.is_promiscuous = is_promiscuous;
-        self
-    }
-
-    #[instrument(skip_all)]
-    pub fn build(self) -> NetworkCard {
-        NetworkCard {
-            addr: NetworkCardRaw::new(self.core, self.ip, self.mac, self.is_promiscuous).start(),
-            ip: self.ip,
-            mac: self.mac,
-        }
-    }
-}
-
-// Network Interface Cardなので、Ethernet以外でも使えるようにすべき
-// もちろんEthernetFrameを返すのも変な話
-struct NetworkCardRaw {
-    eth: EthernetCard,
-    ip: Ipv4Addr,
-    rx_buffer: Arc<Mutex<VecDeque<EthernetFrame>>>,
-}
-
-impl NetworkCardRaw {
-    fn new(core: Core, ip: Ipv4Addr, mac: MacAddr6, is_promiscuous: bool) -> Self {
-        NetworkCardRaw {
-            eth: EthernetCard::new(core, mac, is_promiscuous),
-            ip,
-            rx_buffer: Arc::new(Mutex::new(VecDeque::new())),
-        }
-    }
-}
-
-impl Actor for NetworkCardRaw {
-    type Context = Context<Self>;
-
-    fn started(&mut self, ctx: &mut Self::Context) {
-        let eth = self.eth.clone();
-        let rx_buffer = self.rx_buffer.clone();
-
-        ctx.spawn(
-            async move {
-                loop {
-                    if let Some(ef) = eth.recv().await {
-                        rx_buffer.lock().await.push_back(ef);
-                    }
-                }
-            }
-            .into_actor(self),
-        );
-    }
-}
-
-#[derive(Message)]
-#[rtype(result = "()")]
-struct NetworkCardRawSend {
-    dst: MacAddr6,
-    payload: EthernetFrameType,
-}
-
-impl Handler<NetworkCardRawSend> for NetworkCardRaw {
-    type Result = ();
-
-    fn handle(&mut self, msg: NetworkCardRawSend, ctx: &mut Self::Context) -> Self::Result {
-        self.eth.send(msg.dst, msg.payload);
-    }
-}
-
-#[derive(Message)]
-#[rtype(result = "Option<EthernetFrame>")]
-struct NetworkCardRawRecv;
-
-impl Handler<NetworkCardRawRecv> for NetworkCardRaw {
-    type Result = ResponseFuture<Option<EthernetFrame>>;
-
-    fn handle(&mut self, msg: NetworkCardRawRecv, ctx: &mut Self::Context) -> Self::Result {
-        let rx_buffer = self.rx_buffer.clone();
-
-        Box::pin(async move { rx_buffer.lock().await.pop_front() })
-    }
-}
-
-#[derive(Message)]
-#[rtype(result = "Uuid")]
-struct NetworkCardRawGetUuid;
-impl Handler<NetworkCardRawGetUuid> for NetworkCardRaw {
-    type Result = ResponseFuture<Uuid>;
-
-    fn handle(&mut self, msg: NetworkCardRawGetUuid, ctx: &mut Self::Context) -> Self::Result {
-        let eth = self.eth.clone();
-
-        Box::pin(async move { eth.uuid().await })
-    }
-}
-
-pub struct NetworkDriver {
-    addr: Addr<NetworkDriverRaw>,
-}
-
-impl NetworkDriver {
-    pub fn new(nic: NetworkCard) -> Self {
-        NetworkDriver {
-            addr: NetworkDriverRaw::new(nic).start(),
-        }
+impl NetworkInterfaceCard {
+    pub async fn spawn(core: Core, ip: Ipv4Addr, mac: MacAddr6) -> Self {
+        let (addr, _) =
+            NetworkInterfaceCardActor::spawn(None, NetworkInterfaceCardActor, (core, ip, mac))
+                .await
+                .unwrap();
+        Self { addr, ip, mac }
     }
 
     pub fn send(&self, dst: Ipv4Addr, payload: IPv4PacketType) {
-        self.addr.do_send(NetworkDriverSend { dst, payload })
+        cast!(self.addr, NetworkInterfaceCardMsg::Send(dst, payload)).unwrap();
     }
 
-    pub async fn recv(&self) -> Option<IPv4Packet> {
-        self.addr.send(NetworkDriverRecv {}).await.unwrap()
+    pub async fn recv_blocking(&self) -> IPv4Packet {
+        call!(self.addr, NetworkInterfaceCardMsg::RecvBlocking).unwrap()
+    }
+
+    pub async fn uuid(&self) -> Uuid {
+        call!(self.addr, NetworkInterfaceCardMsg::GetUuid).unwrap()
+    }
+
+    pub fn actor_ref(&self) -> &ActorRef<NetworkInterfaceCardMsg> {
+        &self.addr
     }
 }
 
-impl Connectable for NetworkDriver {
-    async fn uuid(&self) -> Uuid {
-        self.addr.send(NetworkDriverGetUuid {}).await.unwrap()
+#[derive(Debug)]
+pub enum NetworkInterfaceCardMsg {
+    Send(Ipv4Addr, IPv4PacketType),
+    OnReceive(EthernetFrame),
+    GetUuid(RpcReplyPort<Uuid>),
+    RecvBlocking(RpcReplyPort<IPv4Packet>),
+}
+
+impl From<OnReceive> for NetworkInterfaceCardMsg {
+    fn from(value: OnReceive) -> Self {
+        debug!("from {:?}", value);
+        NetworkInterfaceCardMsg::OnReceive(value.payload)
     }
 }
 
-struct NetworkDriverRaw {
-    nic: NetworkCard,
-    arp_cache: Arc<Mutex<HashMap<Ipv4Addr, MacAddr6>>>,
-    tx_pendings: Arc<Mutex<HashMap<Ipv4Addr, Vec<NetworkDriverSend>>>>,
-    rx_buffer: Arc<Mutex<VecDeque<IPv4Packet>>>,
-}
+impl TryFrom<NetworkInterfaceCardMsg> for OnReceive {
+    type Error = String;
 
-impl NetworkDriverRaw {
-    fn new(nic: NetworkCard) -> Self {
-        NetworkDriverRaw {
-            nic,
-            arp_cache: Arc::new(Mutex::new(HashMap::new())),
-            tx_pendings: Arc::new(Mutex::new(HashMap::new())),
-            rx_buffer: Arc::new(Mutex::new(VecDeque::new())),
+    fn try_from(value: NetworkInterfaceCardMsg) -> Result<Self, Self::Error> {
+        match value {
+            NetworkInterfaceCardMsg::OnReceive(ef) => Ok(OnReceive {
+                payload: ef,
+                dst: usize::MAX,
+            }),
+            _ => Err("invalid try form".to_string()),
         }
     }
 }
 
-impl Actor for NetworkDriverRaw {
-    type Context = Context<Self>;
+pub struct NetworkInterfaceCardActor;
 
-    fn started(&mut self, ctx: &mut Self::Context) {
-        let nic = self.nic.clone();
-        let arp_cache = self.arp_cache.clone();
-        let tx_pendings = self.tx_pendings.clone();
-        let rx_buffer = self.rx_buffer.clone();
-        let me = ctx.address().recipient();
-
-        ctx.spawn(
-            async move {
-                loop {
-                    if let Some(ef) = nic.recv().await {
-                        match ef.payload {
-                            EthernetFrameType::IPv4(packet) => {
-                                rx_buffer.lock().await.push_back(packet);
-                            }
-                            EthernetFrameType::Arp(arp) => match arp.op {
-                                ArpOperation::Reply => {
-                                    if arp.dst_ip == nic.ip {
-                                        arp_cache.lock().await.insert(arp.src_ip, arp.src_mac);
-
-                                        if let Some(pendings) =
-                                            tx_pendings.lock().await.remove(&arp.src_ip)
-                                        {
-                                            for pending in pendings.into_iter() {
-                                                me.do_send(pending);
-                                            }
-                                        }
-                                    }
-                                }
-                                ArpOperation::Request => {
-                                    if arp.dst_ip == nic.ip {
-                                        arp_cache.lock().await.insert(arp.src_ip, arp.src_mac);
-
-                                        let arp_reply = ArpPacket::mk_reply(
-                                            arp.src_ip,
-                                            arp.src_mac,
-                                            nic.ip,
-                                            nic.mac,
-                                        );
-
-                                        nic.send(arp.dst_mac, EthernetFrameType::Arp(arp_reply));
-                                    }
-                                }
-                            },
-                            EthernetFrameType::Dummy => {}
-                        }
-                    }
-
-                    tokio::task::yield_now().await;
-                }
-            }
-            .into_actor(self),
-        );
-    }
+pub struct NetworkInterfaceCardActorState {
+    eth: EthernetCard,
+    ip: Ipv4Addr,
+    mac: MacAddr6,
+    arp_cache: HashMap<Ipv4Addr, MacAddr6>,
+    tx_pendings: HashMap<Ipv4Addr, Vec<IPv4PacketType>>,
+    rx_buffer_r: UnboundedReceiver<IPv4Packet>,
+    rx_buffer_s: UnboundedSender<IPv4Packet>,
 }
 
-#[derive(Message, Clone)]
-#[rtype(result = "()")]
-struct NetworkDriverSend {
-    dst: Ipv4Addr,
-    payload: IPv4PacketType,
-}
+#[ractor::async_trait]
+impl Actor for NetworkInterfaceCardActor {
+    type Msg = NetworkInterfaceCardMsg;
+    type State = NetworkInterfaceCardActorState;
+    type Arguments = (Core, Ipv4Addr, MacAddr6);
 
-impl Handler<NetworkDriverSend> for NetworkDriverRaw {
-    type Result = ResponseFuture<()>;
+    async fn pre_start(
+        &self,
+        myself: ActorRef<Self::Msg>,
+        (core, ip, mac): Self::Arguments,
+    ) -> Result<Self::State, ActorProcessingErr> {
+        let me = myself.get_derived();
+        let eth = EthernetCard::spawn(core, mac, false, me.clone()).await;
+        let (rx_buffer_s, rx_buffer_r) = mpsc_unbounded();
 
-    fn handle(&mut self, msg: NetworkDriverSend, ctx: &mut Self::Context) -> Self::Result {
-        let arp_cache = self.arp_cache.clone();
-        let tx_pendings = self.tx_pendings.clone();
-        let nic = self.nic.clone();
-
-        Box::pin(async move {
-            if let Some(target_mac) = arp_cache.lock().await.get(&msg.dst) {
-                nic.send(
-                    *target_mac,
-                    EthernetFrameType::IPv4(IPv4Packet::new(nic.ip, msg.dst, msg.payload)),
-                );
-            } else {
-                // tx_pendings.lock().await.insert(msg.dst, msg.clone());
-                tx_pendings
-                    .lock()
-                    .await
-                    .entry(msg.dst)
-                    .and_modify(|tbl| tbl.push(msg.clone()))
-                    .or_insert(vec![msg.clone()]);
-
-                nic.send(
+        let r = Ok(NetworkInterfaceCardActorState {
+            eth,
+            ip,
+            mac,
+            arp_cache: HashMap::new(),
+            tx_pendings: HashMap::new(),
+            rx_buffer_r,
+            rx_buffer_s,
+        });
+        cast!(
+            me,
+            OnReceive {
+                payload: EthernetFrame::new(
                     MacAddr6::broadcast(),
-                    EthernetFrameType::Arp(ArpPacket::mk_request(msg.dst, nic.ip, nic.mac)),
-                );
+                    MacAddr6::broadcast(),
+                    EthernetFrameType::Dummy
+                ),
+                dst: 0
             }
-        })
+        );
+        r
+    }
+
+    async fn handle(
+        &self,
+        _myself: ActorRef<Self::Msg>,
+        msg: Self::Msg,
+        state: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        match msg {
+            NetworkInterfaceCardMsg::Send(dst, payload) => {
+                if let Some(mac) = state.arp_cache.get(&dst) {
+                    state
+                        .eth
+                        .send(
+                            *mac,
+                            EthernetFrameType::IPv4(IPv4Packet::new(state.ip, dst, payload)),
+                        )
+                        .await;
+                } else {
+                    state
+                        .tx_pendings
+                        .entry(dst)
+                        .or_default()
+                        .push(payload.clone());
+                    let req = ArpPacket::mk_request(dst, state.ip, state.mac);
+                    state
+                        .eth
+                        .send(MacAddr6::broadcast(), EthernetFrameType::Arp(req))
+                        .await;
+                }
+            },
+            NetworkInterfaceCardMsg::OnReceive(ef) => {
+                debug!("l3 card {:?}", ef);
+                match ef.payload {
+                    EthernetFrameType::IPv4(packet) => state.rx_buffer_s.send(packet).unwrap(),
+                    EthernetFrameType::Arp(arp) => self.handle_arp(state, arp).await,
+                    _ => {},
+                }
+            },
+            NetworkInterfaceCardMsg::RecvBlocking(reply) => {
+                let packet = state.rx_buffer_r.recv().await.unwrap();
+                let _ = reply.send(packet);
+            },
+            NetworkInterfaceCardMsg::GetUuid(reply) => {
+                let uuid = state.eth.uuid().await;
+                let _ = reply.send(uuid);
+            },
+        }
+        Ok(())
     }
 }
 
-#[derive(Message)]
-#[rtype(result = "Option<IPv4Packet>")]
-struct NetworkDriverRecv;
+impl NetworkInterfaceCardActor {
+    async fn handle_arp(&self, state: &mut NetworkInterfaceCardActorState, arp: ArpPacket) {
+        let action = handle_arp(
+            &arp,
+            state.ip,
+            state.mac,
+            state.arp_cache.clone(),
+            state.tx_pendings.clone(),
+        );
 
-impl Handler<NetworkDriverRecv> for NetworkDriverRaw {
-    type Result = ResponseFuture<Option<IPv4Packet>>;
+        state.arp_cache = action.updated_arp_cache;
+        state.tx_pendings = action.updated_tx_pendings;
 
-    fn handle(&mut self, msg: NetworkDriverRecv, ctx: &mut Self::Context) -> Self::Result {
-        let rx_buffer = self.rx_buffer.clone();
-
-        Box::pin(async move { rx_buffer.lock().await.pop_front() })
-    }
-}
-
-#[derive(Message)]
-#[rtype(result = "Uuid")]
-struct NetworkDriverGetUuid;
-
-impl Handler<NetworkDriverGetUuid> for NetworkDriverRaw {
-    type Result = ResponseFuture<Uuid>;
-
-    fn handle(&mut self, msg: NetworkDriverGetUuid, ctx: &mut Self::Context) -> Self::Result {
-        let nic = self.nic.clone();
-
-        Box::pin(async move { nic.uuid().await })
+        for (dst_mac, frame_type) in action.send_frames {
+            state.eth.send(dst_mac, frame_type).await;
+        }
     }
 }

@@ -1,9 +1,8 @@
 use std::net::Ipv4Addr;
 
-use actix::prelude::*;
 use macaddr::MacAddr6;
 
-#[derive(Debug, Clone, MessageResponse, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EthernetFrame {
     pub dst: MacAddr6,
     pub src: MacAddr6,
@@ -16,14 +15,14 @@ impl EthernetFrame {
     }
 }
 
-#[derive(Debug, Clone, MessageResponse, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EthernetFrameType {
     Dummy,
     IPv4(IPv4Packet),
     Arp(ArpPacket),
 }
 
-#[derive(Debug, Clone, MessageResponse, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IPv4Packet {
     pub src: Ipv4Addr,
     pub dst: Ipv4Addr,
@@ -36,7 +35,7 @@ impl IPv4Packet {
     }
 }
 
-#[derive(Debug, Clone, MessageResponse, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IPv4PacketType {
     Debug(String),
 }
@@ -72,11 +71,7 @@ impl ArpPacket {
         }
     }
 
-    pub fn mk_request(
-        target_ip: Ipv4Addr,
-        self_ip: Ipv4Addr,
-        self_mac: MacAddr6,
-    ) -> Self {
+    pub fn mk_request(target_ip: Ipv4Addr, self_ip: Ipv4Addr, self_mac: MacAddr6) -> Self {
         ArpPacket {
             op: ArpOperation::Request,
             dst_mac: MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00),

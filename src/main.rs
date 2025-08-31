@@ -1,55 +1,54 @@
 use std::{net::Ipv4Addr, time::Duration};
 
-use actix::prelude::*;
-use macaddr::MacAddr6;
+use const_addrs::{ip4, mac6};
 use tokio::{join, time::sleep};
 use tracing::Level;
-use vnet::{
-    Core, EthernetCard, EthernetFrameType, IPv4PacketType, L2Sw, NetworkCard, NetworkDriver,
-};
+use vnet::{Core, IPv4PacketType, L2Sw, NetworkInterfaceCard, l2};
 
-#[actix::main]
+#[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
-        // .with_thread_names(true)
         .with_level(true)
         .with_max_level(Level::TRACE)
         .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NEW)
         .with_target(true)
         .init();
 
-    let core = Core::new();
+    let core = Core::spawn().await;
 
-    let nic0 = NetworkCard::new(
+    let nic0 = NetworkInterfaceCard::spawn(
         core.clone(),
-        Ipv4Addr::new(192, 168, 0, 0),
-        MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
+        ip4!("192.168.0.1"),
+        mac6!("00:00:00:00:00:01"),
     )
-    .build();
+    .await;
 
-    let nth0 = NetworkDriver::new(nic0);
-
-    let nic1 = NetworkCard::new(
+    let nic1 = NetworkInterfaceCard::spawn(
         core.clone(),
-        Ipv4Addr::new(192, 168, 0, 1),
-        MacAddr6::new(0x00, 0x00, 0x00, 0x00, 0x00, 0x01),
+        ip4!("192.168.0.2"),
+        mac6!("00:00:00:00:00:02"),
     )
-    .build();
-    let nth1 = NetworkDriver::new(nic1);
+    .await;
 
-    let l2sw = L2Sw::new(core.clone(), 2);
+    let l2sw = L2Sw::spawn(core.clone(), 2).await;
 
-    core.connect(&nth0, &l2sw.port(0).await.unwrap()).await;
-    core.connect(&nth1, &l2sw.port(1).await.unwrap()).await;
+    core.connect(nic0.uuid().await, l2sw.port(0).await.unwrap().uuid().await)
+        .await;
 
-    nth0.send(
-        Ipv4Addr::new(192, 168, 0, 1),
-        IPv4PacketType::Debug("dummy".to_string()),
-    );
+    core.connect(nic1.uuid().await, l2sw.port(1).await.unwrap().uuid().await)
+        .await;
 
-    sleep(Duration::from_millis(10)).await;
+    tokio::spawn(async move {
+        nic0.send(
+            ip4!("192.168.0.2"),
+            IPv4PacketType::Debug("dummy".to_string()),
+        );
+    });
 
-    let r = nth1.recv().await;
-    // assert_eq!(r, None);
-    println!("{:?}", r);
+    let j = tokio::spawn(async move {
+        let r = nic1.recv_blocking().await;
+        println!("ttttttttttttttttttttttttttt {:?}", r);
+    });
+
+    j.await;
 }

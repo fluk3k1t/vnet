@@ -1,103 +1,104 @@
-use actix::{dev::MessageResponse, prelude::*};
-
 use crate::{Core, EthernetFrame, Uuid};
+use ractor::{Actor, ActorProcessingErr, ActorRef, DerivedActorRef, RpcReplyPort, call, cast};
+use tracing::debug;
 
-#[derive(MessageResponse, Clone, Debug)]
-pub struct EndPoint {
-    addr: Addr<EndPointRaw>,
-}
-
-impl EndPoint {
-    pub fn new(core: Core, uuid: Uuid, on_receive: Recipient<OnReceive>) -> Self {
-        let ep_raw = EndPointRaw::new(core, uuid, on_receive);
-        EndPoint {
-            addr: ep_raw.start(),
-        }
-    }
-
-    pub async fn uuid(&self) -> Uuid {
-        self.addr.send(GetUuid).await.unwrap()
-    }
-
-    pub fn send(&self, payload: EthernetFrame) {
-        self.addr.do_send(Send(payload));
-    }
-
-    pub async fn write(&self, payload: EthernetFrame) {
-        self.addr.send(Write(payload)).await.unwrap();
-    }
-}
-
-#[derive(MessageResponse)]
-struct EndPointRaw {
-    uuid: Uuid,
-    core: Core,
-    on_receive: Recipient<OnReceive>,
-}
-
-impl Actor for EndPointRaw {
-    type Context = Context<Self>;
-}
-
-impl EndPointRaw {
-    fn new(core: Core, uuid: Uuid, on_receive: Recipient<OnReceive>) -> Self {
-        EndPointRaw {
-            uuid,
-            core,
-            on_receive,
-        }
-    }
-}
-
-#[derive(Message, Debug)]
-#[rtype(result = "()")]
-pub struct OnReceive {
+#[derive(Debug, Clone)]
+pub struct OnReceiveRaw {
     pub dst: Uuid,
     pub payload: EthernetFrame,
 }
 
-#[derive(Message)]
-#[rtype(Uuid)]
-struct GetUuid;
+#[derive(Debug)]
+pub enum EndPointMsg {
+    GetUuid(RpcReplyPort<Uuid>),
+    Send(EthernetFrame),
+    Write(EthernetFrame),
+}
 
-impl Handler<GetUuid> for EndPointRaw {
-    type Result = Uuid;
-    fn handle(&mut self, msg: GetUuid, ctx: &mut Self::Context) -> Self::Result {
-        self.uuid
+#[derive(Debug, Clone)]
+pub struct EndPoint {
+    addr: ActorRef<EndPointMsg>,
+}
+
+impl EndPoint {
+    pub fn new(addr: ActorRef<EndPointMsg>) -> Self {
+        EndPoint { addr }
+    }
+
+    pub async fn uuid(&self) -> Uuid {
+        call!(self.addr, EndPointMsg::GetUuid).unwrap()
+    }
+
+    pub fn send(&self, frame: EthernetFrame) {
+        cast!(self.addr, EndPointMsg::Send(frame)).unwrap()
+    }
+
+    pub fn write(&self, frame: EthernetFrame) {
+        let _ = cast!(self.addr, EndPointMsg::Write(frame));
+    }
+
+    pub fn actor_ref(&self) -> &ActorRef<EndPointMsg> {
+        &self.addr
+    }
+
+    pub async fn spawn(
+        core: Core,
+        uuid: Uuid,
+        on_receive: DerivedActorRef<OnReceiveRaw>,
+    ) -> ActorRef<EndPointMsg> {
+        let (addr, _) = EndPointActor::spawn(None, EndPointActor, (uuid, core, on_receive))
+            .await
+            .unwrap();
+        addr
     }
 }
 
-#[derive(Message)]
-#[rtype(result = "()")]
-struct Send(EthernetFrame);
-
-impl Handler<Send> for EndPointRaw {
-    type Result = ();
-
-    fn handle(&mut self, msg: Send, ctx: &mut Self::Context) -> Self::Result {
-        let core = self.core.clone();
-        let uuid = self.uuid;
-
-        core.send(uuid, msg.0);
-    }
+pub struct EndPointActorState {
+    uuid: Uuid,
+    core: Core,
+    on_receive: DerivedActorRef<OnReceiveRaw>,
 }
 
-#[derive(Message)]
-#[rtype(result = "()")]
-struct Write(EthernetFrame);
+pub struct EndPointActor;
 
-impl Handler<Write> for EndPointRaw {
-    type Result = ResponseFuture<()>;
+#[ractor::async_trait]
+impl Actor for EndPointActor {
+    type Msg = EndPointMsg;
+    type State = EndPointActorState;
+    type Arguments = (Uuid, Core, DerivedActorRef<OnReceiveRaw>);
 
-    fn handle(&mut self, msg: Write, ctx: &mut Self::Context) -> Self::Result {
-        let on_receive = self.on_receive.clone();
-        let uuid = self.uuid;
-
-        Box::pin(async move {
-            on_receive.do_send(OnReceive {
-                payload: msg.0,
-                dst: uuid,
-            });
+    async fn pre_start(
+        &self,
+        _myself: ActorRef<Self::Msg>,
+        (uuid, core, on_receive): Self::Arguments,
+    ) -> Result<Self::State, ActorProcessingErr> {
+        Ok(EndPointActorState {
+            uuid,
+            core,
+            on_receive,
         })
+    }
+
+    async fn handle(
+        &self,
+        _myself: ActorRef<Self::Msg>,
+        msg: Self::Msg,
+        state: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        match msg {
+            EndPointMsg::GetUuid(reply) => {
+                let _ = reply.send(state.uuid);
+            },
+            EndPointMsg::Send(frame) => {
+                state.core.send(state.uuid, frame);
+            },
+            EndPointMsg::Write(frame) => {
+                let e = state.on_receive.cast(OnReceiveRaw {
+                    dst: state.uuid,
+                    payload: frame,
+                });
+            },
+        }
+        Ok(())
     }
 }
