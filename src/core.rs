@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use actix::prelude::*;
 use tokio::{net::unix::pipe::Receiver, sync::Mutex};
-use tracing::{debug, info, instrument};
 
 use crate::{EndPoint, EthernetFrame, OnReceive};
 
@@ -30,7 +29,6 @@ impl Core {
         self.addr.do_send(Send { uuid, payload });
     }
 
-    #[instrument(skip(self, e0, e1))]
     pub async fn connect<E0: Connectable, E1: Connectable>(&self, e0: &E0, e1: &E1) {
         self.addr.do_send(Connect {
             e0: e0.uuid().await,
@@ -69,10 +67,7 @@ struct CreateEndPoint {
 impl Handler<CreateEndPoint> for CoreRaw {
     type Result = ResponseFuture<EndPoint>;
 
-    #[instrument(skip(self, ctx))]
     fn handle(&mut self, msg: CreateEndPoint, ctx: &mut Self::Context) -> Self::Result {
-        info!("created 'EndPoint' with uuid = {}", self.next_uuid);
-
         let endpoints = self.endpoints.clone();
         let me = ctx.address();
         let uuid = self.next_uuid;
@@ -103,10 +98,8 @@ impl Handler<Send> for CoreRaw {
 
         Box::pin(async move {
             if let Some(targets) = connections.lock().await.get(&msg.uuid) {
-                debug!("send to");
                 for target in targets.iter() {
                     if let Some(target_ep) = endpoints.lock().await.get_mut(target) {
-                        debug!("target {:?} {}", target_ep, target_ep.uuid().await);
                         target_ep.write(msg.payload.clone()).await;
                     }
                 }
@@ -125,10 +118,7 @@ struct Connect {
 impl Handler<Connect> for CoreRaw {
     type Result = ResponseFuture<()>;
 
-    #[instrument(skip(self, ctx))]
     fn handle(&mut self, msg: Connect, ctx: &mut Self::Context) -> Self::Result {
-        info!("connected {} between {}", msg.e0, msg.e1);
-
         let connections = self.connections.clone();
 
         Box::pin(async move {

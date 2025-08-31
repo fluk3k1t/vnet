@@ -1,6 +1,4 @@
 use actix::{dev::MessageResponse, prelude::*};
-use tracing::debug;
-use tracing_subscriber::field::debug;
 
 use crate::{Core, EthernetFrame, Uuid};
 

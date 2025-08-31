@@ -10,7 +10,7 @@ use actix::prelude::*;
 use futures::future::join_all;
 use macaddr::MacAddr6;
 use tokio::sync::Mutex;
-use tracing::{debug, trace};
+use tracing::{debug, instrument, trace};
 
 use crate::{
     ArpOperation, ArpPacket, Connectable, Core, EndPoint, EthernetCard, EthernetFrame,
@@ -41,10 +41,12 @@ impl NetworkCard {
         }
     }
 
+    #[instrument(skip(self))]
     pub fn send(&self, dst: MacAddr6, payload: EthernetFrameType) {
         self.addr.do_send(NetworkCardRawSend { dst, payload });
     }
 
+    #[instrument(skip(self))]
     pub async fn recv(&self) -> Option<EthernetFrame> {
         self.addr.send(NetworkCardRawRecv).await.unwrap()
     }
@@ -60,6 +62,7 @@ impl NetworkCardBuilder {
         self
     }
 
+    #[instrument(skip_all)]
     pub fn build(self) -> NetworkCard {
         NetworkCard {
             addr: NetworkCardRaw::new(self.core, self.ip, self.mac, self.is_promiscuous).start(),

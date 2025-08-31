@@ -1,24 +1,25 @@
 # Summary
 
-Date : 2025-08-29 12:05:51
+Date : 2025-08-30 13:04:49
 
 Directory /workspaces/vnet
 
-Total : 8 files,  974 codes, 5 comments, 162 blanks, all 1141 lines
+Total : 14 files,  1599 codes, 20 comments, 302 blanks, all 1921 lines
 
 Summary / [Details](details.md) / [Diff Summary](diff.md) / [Diff Details](diff-details.md)
 
 ## Languages
 | language | files | code | comment | blank | total |
 | :--- | ---: | ---: | ---: | ---: | ---: |
+| Rust | 12 | 934 | 18 | 218 | 1,170 |
 | TOML | 2 | 665 | 2 | 84 | 751 |
-| Rust | 6 | 309 | 3 | 78 | 390 |
 
 ## Directories
 | path | files | code | comment | blank | total |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| . | 8 | 974 | 5 | 162 | 1,141 |
+| . | 14 | 1,599 | 20 | 302 | 1,921 |
 | . (Files) | 2 | 665 | 2 | 84 | 751 |
-| src | 6 | 309 | 3 | 78 | 390 |
+| src | 8 | 835 | 18 | 184 | 1,037 |
+| tests | 4 | 99 | 0 | 34 | 133 |
 
 Summary / [Details](details.md) / [Diff Summary](diff.md) / [Diff Details](diff-details.md)

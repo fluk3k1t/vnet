@@ -4,7 +4,6 @@ use actix::prelude::*;
 use futures::future::join_all;
 use macaddr::MacAddr6;
 use tokio::sync::Mutex;
-use tracing::debug;
 
 use crate::{Connectable, Core, EndPoint, EthernetFrame, EthernetFrameType, OnReceive, Uuid};
 
@@ -208,7 +207,6 @@ impl Handler<OnReceive> for EthernetCardRaw {
     type Result = ();
 
     fn handle(&mut self, msg: OnReceive, ctx: &mut Self::Context) -> Self::Result {
-        debug!("ethernet card on receive");
         self.rx_buffer.push_back(msg.payload);
     }
 }
