@@ -1,0 +1,42 @@
+Date : 2025-09-02 08:06:11
+Directory : /workspaces/vnet
+Total : 14 files,  684 codes, -42 comments, 96 blanks, all 738 lines
+
+Languages
++----------+------------+------------+------------+------------+------------+
+| language | files      | code       | comment    | blank      | total      |
++----------+------------+------------+------------+------------+------------+
+| Rust     |         11 |        494 |        -42 |         74 |        526 |
+| TOML     |          3 |        190 |          0 |         22 |        212 |
++----------+------------+------------+------------+------------+------------+
+
+Directories
++-------------------------------------+------------+------------+------------+------------+------------+
+| path                                | files      | code       | comment    | blank      | total      |
++-------------------------------------+------------+------------+------------+------------+------------+
+| .                                   |         14 |        684 |        -42 |         96 |        738 |
+| . (Files)                           |          3 |        190 |          0 |         22 |        212 |
+| src                                 |         10 |        456 |        -42 |         65 |        479 |
+| tests                               |          1 |         38 |          0 |          9 |         47 |
++-------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++-------------------------------------+----------+------------+------------+------------+------------+
+| filename                            | language | code       | comment    | blank      | total      |
++-------------------------------------+----------+------------+------------+------------+------------+
+| /workspaces/vnet/Cargo.lock         | TOML     |        185 |          0 |         22 |        207 |
+| /workspaces/vnet/Cargo.toml         | TOML     |          4 |          0 |          0 |          4 |
+| /workspaces/vnet/rustfmt.toml       | TOML     |          1 |          0 |          0 |          1 |
+| /workspaces/vnet/src/arp.rs         | Rust     |         50 |          0 |          7 |         57 |
+| /workspaces/vnet/src/core.rs        | Rust     |          2 |          0 |         -2 |          0 |
+| /workspaces/vnet/src/endpoint.rs    | Rust     |          5 |          0 |          1 |          6 |
+| /workspaces/vnet/src/format.rs      | Rust     |          0 |          0 |          1 |          1 |
+| /workspaces/vnet/src/l2.rs          | Rust     |        105 |          0 |         17 |        122 |
+| /workspaces/vnet/src/l3.rs          | Rust     |        242 |        -15 |         35 |        262 |
+| /workspaces/vnet/src/lib.rs         | Rust     |          4 |          0 |          2 |          6 |
+| /workspaces/vnet/src/mac_util.rs    | Rust     |          0 |          0 |          1 |          1 |
+| /workspaces/vnet/src/main.rs        | Rust     |         35 |        -27 |         -2 |          6 |
+| /workspaces/vnet/src/util.rs        | Rust     |         13 |          0 |          5 |         18 |
+| /workspaces/vnet/tests/arp_tests.rs | Rust     |         38 |          0 |          9 |         47 |
+| Total                               |          |        684 |        -42 |         96 |        738 |
++-------------------------------------+----------+------------+------------+------------+------------+

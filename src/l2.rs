@@ -27,10 +27,6 @@ impl EthernetCard {
         is_promiscuous: bool,
         on_receive: DerivedActorRef<OnReceive>,
     ) -> Self {
-        info!(
-            "Spawning EthernetCard: mac={:?} promisc={}",
-            mac, is_promiscuous
-        );
         let (addr, _) = EthernetCardActor::spawn(
             None,
             EthernetCardActor,
@@ -38,31 +34,22 @@ impl EthernetCard {
         )
         .await
         .unwrap();
-        info!("EthernetCard spawned: addr={:?}", addr);
 
         Self { addr }
     }
 
     pub async fn send(&self, dst: MacAddr6, payload: EthernetFrameType) {
-        // debug!("EthernetCard send: dst={:?} payload={:?}", dst, payload);
         let _ = cast!(self.addr, EthernetMsg::Send(dst, payload));
     }
 
     pub async fn uuid(&self) -> Uuid {
         let uuid = call!(self.addr, EthernetMsg::GetUuid).unwrap();
-        trace!("EthernetCard uuid: {:?}", uuid);
         uuid
     }
 
     pub fn write(&self, onr: OnReceiveRaw) {
         debug!("EthernetCard write: onr={:?}", onr);
         let _ = cast!(self.addr, EthernetMsg::OnReceive(onr));
-    }
-
-    pub fn filter() {
-        // tracing_subscriber::fmt::layer().with_filter(filter::filter_fn(|metadata| {
-        //     metadata.target() == "ethernetcard"
-        // }))
     }
 }
 
@@ -103,10 +90,9 @@ impl Actor for EthernetCardActor {
         myself: ActorRef<Self::Msg>,
         (core, mac, is_promiscuous, on_receive): Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
-        // ...existing code...
         let on_receive_raw: DerivedActorRef<OnReceiveRaw> = myself.get_derived();
         let ep = core.create_ep(on_receive_raw).await;
-        // ...existing code...
+
         Ok(EthernetCardActorState {
             mac,
             ep,
@@ -121,28 +107,29 @@ impl Actor for EthernetCardActor {
         msg: Self::Msg,
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
-        // ...existing code...
         match msg {
             EthernetMsg::Send(dst, payload) => {
-                // ...existing code...
                 let ef = EthernetFrame::new(state.mac, dst, payload);
                 state.ep.send(ef);
             },
             EthernetMsg::GetUuid(reply) => {
                 let uuid = state.ep.uuid().await;
-                // ...existing code...
                 let _ = reply.send(uuid);
             },
             EthernetMsg::OnReceive(onr) => {
-                // ...existing code...
-                let r = cast!(
-                    state.on_receive,
-                    OnReceive {
-                        payload: onr.payload,
-                        dst: onr.dst,
-                    }
-                );
-                // ...existing code...
+                if onr.payload.dst == state.mac
+                    || onr.payload.dst.is_broadcast()
+                    || state.is_promiscuous
+                {
+                    cast!(
+                        state.on_receive,
+                        OnReceive {
+                            payload: onr.payload,
+                            dst: onr.dst,
+                        }
+                    )
+                    .unwrap();
+                }
             },
         }
         Ok(())

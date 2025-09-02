@@ -3,20 +3,199 @@ use std::net::Ipv4Addr;
 use std::usize;
 
 use crate::{
-    ArpOperation, ArpPacket, Core, EthernetCard, EthernetFrame, EthernetFrameType, IPv4Packet,
-    IPv4PacketType, OnReceive, Uuid, handle_arp,
+    ArpOperation, ArpPacket, Core, EndPoint, EthernetCard, EthernetFrame, EthernetFrameType,
+    IPv4Packet, IPv4PacketType, OnReceive, OnReceiveRaw, Uuid, handle_arp, mac_rnd,
 };
+use futures::future::join_all;
+use ipnet::Ipv4Subnets;
 use macaddr::MacAddr6;
 use ractor::concurrency::mpsc_unbounded;
 use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort, call, cast};
+use rand::Rng;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
+
+pub struct PortConfig {
+    subnet: Ipv4Addr,
+    ip: Ipv4Addr,
+    mac: MacAddr6,
+}
+
+pub struct Port {
+    subnet: Ipv4Addr,
+    nic: NetworkInterfaceCard,
+    ip: Ipv4Addr,
+    uuid: Uuid,
+}
+
+pub struct L3Sw {
+    addr: ActorRef<L3SwMsg>,
+}
+
+pub struct L3SwBuilder {
+    core: Core,
+    ports_config: Vec<PortConfig>,
+}
+
+impl L3SwBuilder {
+    pub fn new(core: Core) -> Self {
+        Self {
+            core,
+            ports_config: vec![],
+        }
+    }
+
+    pub fn port(mut self, ip: Ipv4Addr, subnet: Ipv4Addr) -> Self {
+        self.port_with_mac(ip, subnet, mac_rnd())
+    }
+
+    pub fn port_with_mac(mut self, ip: Ipv4Addr, subnet: Ipv4Addr, mac: MacAddr6) -> Self {
+        self.ports_config.push(PortConfig { subnet, ip, mac });
+        self
+    }
+
+    pub async fn spawn(self) -> L3Sw {
+        let (addr, _) = L3SwActor::spawn(None, L3SwActor, (self.core, self.ports_config))
+            .await
+            .unwrap();
+        L3Sw { addr }
+    }
+}
+
+impl L3Sw {}
+
+type PortIdx = usize;
+
+pub enum Route {
+    Directly {
+        dst: (Ipv4Addr, Ipv4Addr),
+        r#if: PortIdx,
+    },
+}
+
+pub struct RoutingTable {
+    routes: Vec<Route>,
+}
+
+impl RoutingTable {
+    pub fn r#match(&self, dst_ip: Ipv4Addr) -> Option<&Route> {
+        self.routes.iter().find_map(|r| match r {
+            Route::Directly { dst, r#if } => {
+                let network = dst.0 & dst.1;
+                if network == dst_ip & dst.1 {
+                    Some(r)
+                } else {
+                    None
+                }
+            },
+        })
+    }
+}
+
+pub enum L3SwMsg {
+    OnReceive(OnReceive),
+}
+
+impl From<OnReceive> for L3SwMsg {
+    fn from(value: OnReceive) -> Self {
+        L3SwMsg::OnReceive(value)
+    }
+}
+
+impl TryFrom<L3SwMsg> for OnReceive {
+    type Error = String;
+
+    fn try_from(value: L3SwMsg) -> Result<Self, Self::Error> {
+        match value {
+            L3SwMsg::OnReceive(value) => Ok(value),
+            _ => Err("invalid try form".to_string()),
+        }
+    }
+}
+
+pub struct L3SwActorState {
+    ports: Vec<Port>,
+    rtb: RoutingTable,
+}
+
+pub struct L3SwActor;
+
+#[ractor::async_trait]
+impl Actor for L3SwActor {
+    type Msg = L3SwMsg;
+    type State = L3SwActorState;
+    type Arguments = (Core, Vec<PortConfig>);
+
+    async fn pre_start(
+        &self,
+        myself: ActorRef<Self::Msg>,
+        (core, ports_config): Self::Arguments,
+    ) -> Result<Self::State, ActorProcessingErr> {
+        let ports = ports_config.iter().map(async |pc| {
+            let nic = NetworkInterfaceCardBuilder::new()
+                .core(core.clone())
+                .ip(pc.ip)
+                .mac(pc.mac)
+                .promiscuous(true)
+                .spawn()
+                .await;
+            let uuid = nic.uuid().await;
+
+            Port {
+                subnet: pc.subnet,
+                nic,
+                uuid,
+                ip: pc.ip,
+            }
+        });
+
+        let ports = join_all(ports).await;
+
+        let routes = ports
+            .iter()
+            .enumerate()
+            .map(|(r#if, port)| Route::Directly {
+                dst: (port.ip, port.subnet),
+                r#if,
+            })
+            .collect();
+        let rtb = RoutingTable { routes };
+
+        Ok(L3SwActorState { ports, rtb })
+    }
+
+    async fn handle(
+        &self,
+        _myself: ActorRef<Self::Msg>,
+        msg: Self::Msg,
+        state: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        match msg {
+            L3SwMsg::OnReceive(onr) => match onr.payload.payload {
+                EthernetFrameType::IPv4(packet) => {
+                    if let Some(route) = state.rtb.r#match(packet.dst) {
+                        match route {
+                            Route::Directly { dst, r#if } => {
+                                let ifport = state.ports.get_mut(*r#if).expect("unreachable!");
+                                ifport.nic.send(packet.dst, packet.payload);
+                            },
+                        }
+                    }
+                },
+                _ => {},
+            },
+        }
+
+        Ok(())
+    }
+}
 
 pub struct NetworkInterfaceCard {
     addr: ActorRef<NetworkInterfaceCardMsg>,
     ip: Ipv4Addr,
     mac: MacAddr6,
+    promiscuous: bool,
 }
 
 pub struct NetworkInterfaceCardBuilder {
@@ -24,6 +203,7 @@ pub struct NetworkInterfaceCardBuilder {
     ip: Option<Ipv4Addr>,
     mac: Option<MacAddr6>,
     tag: Option<String>,
+    promiscuous: bool,
 }
 
 impl NetworkInterfaceCardBuilder {
@@ -33,6 +213,7 @@ impl NetworkInterfaceCardBuilder {
             ip: None,
             mac: None,
             tag: None,
+            promiscuous: false,
         }
     }
     pub fn core(mut self, core: Core) -> Self {
@@ -51,52 +232,54 @@ impl NetworkInterfaceCardBuilder {
         self.tag = Some(tag.into());
         self
     }
+    pub fn promiscuous(mut self, enable: bool) -> Self {
+        self.promiscuous = enable;
+        self
+    }
     pub async fn spawn(self) -> NetworkInterfaceCard {
         let core = self.core.expect("core is required");
         let ip = self.ip.expect("ip is required");
-        let mac = self.mac.expect("mac is required");
+        let mac = self.mac.unwrap_or_else(|| mac_rnd());
         let tag = self.tag.clone();
+        let promiscuous = self.promiscuous;
 
-        let (addr, _) =
-            NetworkInterfaceCardActor::spawn(tag, NetworkInterfaceCardActor, (core, ip, mac))
-                .await
-                .unwrap();
-        // ...existing code...
-        NetworkInterfaceCard { addr, ip, mac }
+        let (addr, _) = NetworkInterfaceCardActor::spawn(
+            tag,
+            NetworkInterfaceCardActor,
+            (core, ip, mac, promiscuous),
+        )
+        .await
+        .unwrap();
+        NetworkInterfaceCard {
+            addr,
+            ip,
+            mac,
+            promiscuous,
+        }
     }
 }
 
 impl NetworkInterfaceCard {
-    #[deprecated(note = "Use NetworkInterfaceCardBuilder instead")]
-    pub async fn spawn(core: Core, ip: Ipv4Addr, mac: MacAddr6) -> Self {
-        NetworkInterfaceCardBuilder::new()
-            .core(core)
-            .ip(ip)
-            .mac(mac)
-            .spawn()
-            .await
-    }
-
     pub fn send(&self, dst: Ipv4Addr, payload: IPv4PacketType) {
-        // ...existing code...
         cast!(self.addr, NetworkInterfaceCardMsg::Send(dst, payload)).unwrap();
     }
 
     pub async fn recv_blocking(&self) -> IPv4Packet {
-        // ...existing code...
         let pkt = call!(self.addr, NetworkInterfaceCardMsg::RecvBlocking).unwrap();
-        // ...existing code...
         pkt
     }
 
     pub async fn uuid(&self) -> Uuid {
         let uuid = call!(self.addr, NetworkInterfaceCardMsg::GetUuid).unwrap();
-        // ...existing code...
         uuid
     }
 
     pub fn actor_ref(&self) -> &ActorRef<NetworkInterfaceCardMsg> {
         &self.addr
+    }
+
+    pub fn promiscuous(&self) -> bool {
+        self.promiscuous
     }
 }
 
@@ -134,6 +317,7 @@ pub struct NetworkInterfaceCardActorState {
     eth: EthernetCard,
     ip: Ipv4Addr,
     mac: MacAddr6,
+    promiscuous: bool,
     arp_cache: HashMap<Ipv4Addr, MacAddr6>,
     tx_pendings: HashMap<Ipv4Addr, Vec<IPv4PacketType>>,
     rx_buffer_r: Arc<Mutex<UnboundedReceiver<IPv4Packet>>>,
@@ -144,20 +328,21 @@ pub struct NetworkInterfaceCardActorState {
 impl Actor for NetworkInterfaceCardActor {
     type Msg = NetworkInterfaceCardMsg;
     type State = NetworkInterfaceCardActorState;
-    type Arguments = (Core, Ipv4Addr, MacAddr6);
+    type Arguments = (Core, Ipv4Addr, MacAddr6, bool);
 
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
-        (core, ip, mac): Self::Arguments,
+        (core, ip, mac, promiscuous): Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
         let me = myself.get_derived();
-        let eth = EthernetCard::spawn(core, mac, false, me.clone()).await;
+        let eth = EthernetCard::spawn(core, mac, promiscuous, me.clone()).await;
         let (rx_buffer_s, rx_buffer_r) = mpsc_unbounded();
         let r = Ok(NetworkInterfaceCardActorState {
             eth,
             ip,
             mac,
+            promiscuous,
             arp_cache: HashMap::new(),
             tx_pendings: HashMap::new(),
             rx_buffer_r: Arc::new(Mutex::new(rx_buffer_r)),
@@ -196,7 +381,11 @@ impl Actor for NetworkInterfaceCardActor {
                 }
             },
             NetworkInterfaceCardMsg::OnReceive(ef) => match ef.payload {
-                EthernetFrameType::IPv4(packet) => state.rx_buffer_s.send(packet).unwrap(),
+                EthernetFrameType::IPv4(packet) => {
+                    if packet.dst == state.ip || packet.dst.is_broadcast() || state.promiscuous {
+                        state.rx_buffer_s.send(packet).unwrap()
+                    }
+                },
                 EthernetFrameType::Arp(arp) => self.handle_arp(state, arp).await,
                 _ => {},
             },
