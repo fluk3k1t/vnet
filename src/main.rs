@@ -53,5 +53,13 @@ async fn main() {
         .spawn()
         .await;
 
-    // core.connect
+    core.connect(nic1.uuid().await, l3sw.port(0).await.unwrap().uuid().await)
+        .await;
+    core.connect(nic2.uuid().await, l3sw.port(1).await.unwrap().uuid().await)
+        .await;
+
+    nic1.send(
+        ip4!("192.168.2.1"),
+        IPv4PacketType::Debug("debug".to_string()),
+    );
 }

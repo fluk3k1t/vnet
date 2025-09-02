@@ -34,6 +34,12 @@ pub struct L3Sw {
     addr: ActorRef<L3SwMsg>,
 }
 
+impl L3Sw {
+    pub async fn port(&self, idx: PortIdx) -> Option<NetworkInterfaceCard> {
+        call!(self.addr, L3SwMsg::GetPort, idx).unwrap()
+    }
+}
+
 pub struct L3SwBuilder {
     core: Core,
     ports_config: Vec<PortConfig>,
@@ -102,6 +108,7 @@ impl RoutingTable {
 
 pub enum L3SwMsg {
     OnReceive(OnReceive),
+    GetPort(PortIdx, RpcReplyPort<Option<NetworkInterfaceCard>>),
 }
 
 impl From<OnReceive> for L3SwMsg {
@@ -200,6 +207,13 @@ impl Actor for L3SwActor {
                     tracing::info!("non-IPv4 packet received");
                 },
             },
+            L3SwMsg::GetPort(idx, reply) => {
+                if let Some(port) = state.ports.get(idx) {
+                    reply.send(Some(port.nic.clone())).unwrap();
+                } else {
+                    reply.send(None).unwrap();
+                }
+            },
         }
         Ok(())
     }
@@ -225,12 +239,13 @@ impl DefaultGateway {
     }
 }
 
+#[derive(Clone)]
 pub struct NetworkInterfaceCard {
     addr: ActorRef<NetworkInterfaceCardMsg>,
     ip: Ipv4Addr,
     mac: MacAddr6,
     promiscuous: bool,
-    dgw: DefaultGateway,
+    dgw: Option<DefaultGateway>,
 }
 
 pub struct NetworkInterfaceCardBuilder {
@@ -283,12 +298,12 @@ impl NetworkInterfaceCardBuilder {
         let mac = self.mac.unwrap_or_else(|| mac_rnd());
         let tag = self.tag.clone();
         let promiscuous = self.promiscuous;
-        let dgw = self.dgw.expect("default gataway is needed");
+        // let dgw = self.dgw.expect("default gataway is needed");
 
         let (addr, _) = NetworkInterfaceCardActor::spawn(
             tag,
             NetworkInterfaceCardActor,
-            (core, ip, mac, promiscuous, dgw.clone()),
+            (core, ip, mac, promiscuous, self.dgw.clone()),
         )
         .await
         .unwrap();
@@ -297,7 +312,7 @@ impl NetworkInterfaceCardBuilder {
             ip,
             mac,
             promiscuous,
-            dgw,
+            dgw: self.dgw,
         }
     }
 }
@@ -360,7 +375,7 @@ pub struct NetworkInterfaceCardActorState {
     eth: EthernetCard,
     ip: Ipv4Addr,
     mac: MacAddr6,
-    dgw: DefaultGateway,
+    dgw: Option<DefaultGateway>,
     promiscuous: bool,
     arp_cache: HashMap<Ipv4Addr, MacAddr6>,
     tx_pendings: HashMap<Ipv4Addr, Vec<IPv4PacketType>>,
@@ -372,7 +387,7 @@ pub struct NetworkInterfaceCardActorState {
 impl Actor for NetworkInterfaceCardActor {
     type Msg = NetworkInterfaceCardMsg;
     type State = NetworkInterfaceCardActorState;
-    type Arguments = (Core, Ipv4Addr, MacAddr6, bool, DefaultGateway);
+    type Arguments = (Core, Ipv4Addr, MacAddr6, bool, Option<DefaultGateway>);
 
     async fn pre_start(
         &self,
@@ -404,8 +419,10 @@ impl Actor for NetworkInterfaceCardActor {
     ) -> Result<(), ActorProcessingErr> {
         match msg {
             NetworkInterfaceCardMsg::Send(mut dst, payload) => {
-                if !state.dgw.is_belong(dst) {
-                    dst = state.dgw.ip;
+                if let Some(dgw) = &state.dgw {
+                    if !dgw.is_belong(dst) {
+                        dst = dgw.ip;
+                    }
                 }
 
                 if let Some(mac) = state.arp_cache.get(&dst) {
