@@ -21,29 +21,36 @@ pub struct EndPoint {
 }
 
 impl EndPoint {
+    #[instrument(skip(addr))]
     pub fn new(addr: ActorRef<EndPointMsg>) -> Self {
         EndPoint { addr }
     }
 
-    #[instrument]
+    #[instrument(skip(self))]
     pub async fn uuid(&self) -> Uuid {
         let uuid = call!(self.addr, EndPointMsg::GetUuid).unwrap();
-
+        tracing::info!(uuid = ?uuid, "uuid called");
         uuid
     }
 
+    #[instrument(skip(self, frame))]
     pub fn send(&self, frame: EthernetFrame) {
+        tracing::info!("send called");
         cast!(self.addr, EndPointMsg::Send(frame)).unwrap()
     }
 
+    #[instrument(skip(self, frame))]
     pub fn write(&self, frame: EthernetFrame) {
+        tracing::info!("write called");
         let _ = cast!(self.addr, EndPointMsg::Write(frame));
     }
 
+    #[instrument(skip(self))]
     pub fn actor_ref(&self) -> &ActorRef<EndPointMsg> {
         &self.addr
     }
 
+    #[instrument(skip(core, on_receive))]
     pub async fn spawn(
         core: Core,
         uuid: Uuid,
@@ -52,6 +59,7 @@ impl EndPoint {
         let (addr, _) = EndPointActor::spawn(None, EndPointActor, (uuid, core, on_receive))
             .await
             .unwrap();
+        tracing::info!(uuid = ?uuid, "spawn called");
         addr
     }
 }
@@ -84,12 +92,24 @@ impl Actor for EndPointActor {
         })
     }
 
+    #[instrument(skip(self, _myself, msg, state))]
     async fn handle(
         &self,
         _myself: ActorRef<Self::Msg>,
         msg: Self::Msg,
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
+        match &msg {
+            EndPointMsg::GetUuid(_) => {
+                tracing::info!(uuid = ?state.uuid, "handle GetUuid");
+            },
+            EndPointMsg::Send(_) => {
+                tracing::info!(uuid = ?state.uuid, "handle Send");
+            },
+            EndPointMsg::Write(_) => {
+                tracing::info!(uuid = ?state.uuid, "handle Write");
+            },
+        }
         match msg {
             EndPointMsg::GetUuid(reply) => {
                 let _ = reply.send(state.uuid);

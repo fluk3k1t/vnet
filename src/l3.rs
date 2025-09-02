@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::Ipv4Addr;
 use std::usize;
+use tracing::instrument;
 
 use crate::{
     ArpOperation, ArpPacket, Core, EndPoint, EthernetCard, EthernetFrame, EthernetFrameType,
@@ -39,6 +40,7 @@ pub struct L3SwBuilder {
 }
 
 impl L3SwBuilder {
+    #[instrument(skip(core))]
     pub fn new(core: Core) -> Self {
         Self {
             core,
@@ -46,19 +48,23 @@ impl L3SwBuilder {
         }
     }
 
+    #[instrument(skip(self))]
     pub fn port(mut self, ip: Ipv4Addr, subnet: Ipv4Addr) -> Self {
         self.port_with_mac(ip, subnet, mac_rnd())
     }
 
+    #[instrument(skip(self))]
     pub fn port_with_mac(mut self, ip: Ipv4Addr, subnet: Ipv4Addr, mac: MacAddr6) -> Self {
         self.ports_config.push(PortConfig { subnet, ip, mac });
         self
     }
 
+    #[instrument(skip(self))]
     pub async fn spawn(self) -> L3Sw {
         let (addr, _) = L3SwActor::spawn(None, L3SwActor, (self.core, self.ports_config))
             .await
             .unwrap();
+        tracing::info!("L3SwBuilder spawn called");
         L3Sw { addr }
     }
 }
@@ -67,6 +73,7 @@ impl L3Sw {}
 
 type PortIdx = usize;
 
+#[derive(Debug)]
 pub enum Route {
     Directly {
         dst: (Ipv4Addr, Ipv4Addr),
@@ -165,6 +172,7 @@ impl Actor for L3SwActor {
         Ok(L3SwActorState { ports, rtb })
     }
 
+    #[instrument(skip(self, _myself, msg, state))]
     async fn handle(
         &self,
         _myself: ActorRef<Self::Msg>,
@@ -174,20 +182,46 @@ impl Actor for L3SwActor {
         match msg {
             L3SwMsg::OnReceive(onr) => match onr.payload.payload {
                 EthernetFrameType::IPv4(packet) => {
+                    tracing::info!(src=?packet.src, dst=?packet.dst, "IPv4 packet received");
                     if let Some(route) = state.rtb.r#match(packet.dst) {
+                        tracing::info!(route=?route, "route found");
                         match route {
                             Route::Directly { dst, r#if } => {
                                 let ifport = state.ports.get_mut(*r#if).expect("unreachable!");
+                                tracing::info!(out_port=?r#if, "forwarding packet");
                                 ifport.nic.send(packet.dst, packet.payload);
                             },
                         }
+                    } else {
+                        tracing::info!(dst=?packet.dst, "no route found");
                     }
                 },
-                _ => {},
+                _ => {
+                    tracing::info!("non-IPv4 packet received");
+                },
             },
         }
-
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct DefaultGateway {
+    ip: Ipv4Addr,
+    subnet: Ipv4Addr,
+}
+
+impl DefaultGateway {
+    pub fn new(ip: Ipv4Addr, subnet: Ipv4Addr) -> Self {
+        DefaultGateway { ip, subnet }
+    }
+
+    pub fn network(&self) -> Ipv4Addr {
+        self.ip & self.subnet
+    }
+
+    pub fn is_belong(&self, ip: Ipv4Addr) -> bool {
+        self.network() == ip & self.subnet
     }
 }
 
@@ -196,6 +230,7 @@ pub struct NetworkInterfaceCard {
     ip: Ipv4Addr,
     mac: MacAddr6,
     promiscuous: bool,
+    dgw: DefaultGateway,
 }
 
 pub struct NetworkInterfaceCardBuilder {
@@ -204,6 +239,7 @@ pub struct NetworkInterfaceCardBuilder {
     mac: Option<MacAddr6>,
     tag: Option<String>,
     promiscuous: bool,
+    dgw: Option<DefaultGateway>,
 }
 
 impl NetworkInterfaceCardBuilder {
@@ -214,6 +250,7 @@ impl NetworkInterfaceCardBuilder {
             mac: None,
             tag: None,
             promiscuous: false,
+            dgw: None,
         }
     }
     pub fn core(mut self, core: Core) -> Self {
@@ -236,17 +273,22 @@ impl NetworkInterfaceCardBuilder {
         self.promiscuous = enable;
         self
     }
+    pub fn default_gateway(mut self, dgw: DefaultGateway) -> Self {
+        self.dgw = Some(dgw);
+        self
+    }
     pub async fn spawn(self) -> NetworkInterfaceCard {
         let core = self.core.expect("core is required");
         let ip = self.ip.expect("ip is required");
         let mac = self.mac.unwrap_or_else(|| mac_rnd());
         let tag = self.tag.clone();
         let promiscuous = self.promiscuous;
+        let dgw = self.dgw.expect("default gataway is needed");
 
         let (addr, _) = NetworkInterfaceCardActor::spawn(
             tag,
             NetworkInterfaceCardActor,
-            (core, ip, mac, promiscuous),
+            (core, ip, mac, promiscuous, dgw.clone()),
         )
         .await
         .unwrap();
@@ -255,6 +297,7 @@ impl NetworkInterfaceCardBuilder {
             ip,
             mac,
             promiscuous,
+            dgw,
         }
     }
 }
@@ -317,6 +360,7 @@ pub struct NetworkInterfaceCardActorState {
     eth: EthernetCard,
     ip: Ipv4Addr,
     mac: MacAddr6,
+    dgw: DefaultGateway,
     promiscuous: bool,
     arp_cache: HashMap<Ipv4Addr, MacAddr6>,
     tx_pendings: HashMap<Ipv4Addr, Vec<IPv4PacketType>>,
@@ -328,12 +372,12 @@ pub struct NetworkInterfaceCardActorState {
 impl Actor for NetworkInterfaceCardActor {
     type Msg = NetworkInterfaceCardMsg;
     type State = NetworkInterfaceCardActorState;
-    type Arguments = (Core, Ipv4Addr, MacAddr6, bool);
+    type Arguments = (Core, Ipv4Addr, MacAddr6, bool, DefaultGateway);
 
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
-        (core, ip, mac, promiscuous): Self::Arguments,
+        (core, ip, mac, promiscuous, dgw): Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
         let me = myself.get_derived();
         let eth = EthernetCard::spawn(core, mac, promiscuous, me.clone()).await;
@@ -342,6 +386,7 @@ impl Actor for NetworkInterfaceCardActor {
             eth,
             ip,
             mac,
+            dgw,
             promiscuous,
             arp_cache: HashMap::new(),
             tx_pendings: HashMap::new(),
@@ -358,7 +403,11 @@ impl Actor for NetworkInterfaceCardActor {
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
         match msg {
-            NetworkInterfaceCardMsg::Send(dst, payload) => {
+            NetworkInterfaceCardMsg::Send(mut dst, payload) => {
+                if !state.dgw.is_belong(dst) {
+                    dst = state.dgw.ip;
+                }
+
                 if let Some(mac) = state.arp_cache.get(&dst) {
                     state
                         .eth

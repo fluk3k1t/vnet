@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use tracing::instrument;
 
 use crate::{Core, EndPoint, EthernetFrame, EthernetFrameType, OnReceiveRaw, Uuid};
 use futures::{StreamExt, future::join_all, stream::repeat_with};
@@ -21,6 +22,7 @@ pub struct OnReceive {
 }
 
 impl EthernetCard {
+    #[instrument(skip(core, on_receive))]
     pub async fn spawn(
         core: Core,
         mac: MacAddr6,
@@ -38,16 +40,21 @@ impl EthernetCard {
         Self { addr }
     }
 
+    #[instrument(skip(self, payload))]
     pub async fn send(&self, dst: MacAddr6, payload: EthernetFrameType) {
+        tracing::info!(?dst, "send called");
         let _ = cast!(self.addr, EthernetMsg::Send(dst, payload));
     }
 
+    #[instrument(skip(self))]
     pub async fn uuid(&self) -> Uuid {
         let uuid = call!(self.addr, EthernetMsg::GetUuid).unwrap();
         uuid
     }
 
+    #[instrument(skip(self, onr))]
     pub fn write(&self, onr: OnReceiveRaw) {
+        tracing::info!(?onr, "write called");
         debug!("EthernetCard write: onr={:?}", onr);
         let _ = cast!(self.addr, EthernetMsg::OnReceive(onr));
     }
@@ -101,12 +108,24 @@ impl Actor for EthernetCardActor {
         })
     }
 
+    #[instrument(skip(self, _myself, msg, state))]
     async fn handle(
         &self,
         _myself: ActorRef<Self::Msg>,
         msg: Self::Msg,
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
+        match &msg {
+            EthernetMsg::Send(dst, _) => {
+                tracing::info!(?dst, "handle Send");
+            },
+            EthernetMsg::GetUuid(_) => {
+                tracing::info!("handle GetUuid");
+            },
+            EthernetMsg::OnReceive(onr) => {
+                tracing::info!(?onr, "handle OnReceive");
+            },
+        }
         match msg {
             EthernetMsg::Send(dst, payload) => {
                 let ef = EthernetFrame::new(state.mac, dst, payload);

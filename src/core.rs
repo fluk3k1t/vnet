@@ -1,5 +1,6 @@
 use ractor::{Actor, ActorProcessingErr, ActorRef, DerivedActorRef, RpcReplyPort, call, cast};
 use std::collections::HashMap;
+use tracing::instrument;
 
 use crate::{EndPoint, EndPointMsg, EthernetFrame, OnReceiveRaw};
 
@@ -11,24 +12,32 @@ pub struct Core {
 }
 
 impl Core {
+    #[instrument(skip(actor_ref))]
     pub fn new(actor_ref: ActorRef<CoreMsg>) -> Self {
         Core { addr: actor_ref }
     }
 
+    #[instrument()]
     pub async fn spawn() -> Self {
         let (addr, _) = CoreActor::spawn(None, CoreActor, ()).await.unwrap();
         Core { addr }
     }
 
+    #[instrument(skip(self, on_receive_raw))]
     pub async fn create_ep(&self, on_receive_raw: DerivedActorRef<OnReceiveRaw>) -> EndPoint {
+        tracing::info!("create_ep called");
         call!(self.addr, CoreMsg::CreateEndPoint, on_receive_raw).unwrap()
     }
 
+    #[instrument(skip(self, payload))]
     pub fn send(&self, uuid: Uuid, payload: EthernetFrame) {
+        tracing::info!(uuid = ?uuid, "send called");
         cast!(self.addr, CoreMsg::Send(uuid, payload)).unwrap()
     }
 
+    #[instrument(skip(self))]
     pub async fn connect(&self, e0: Uuid, e1: Uuid) {
+        tracing::info!(e0 = ?e0, e1 = ?e1, "connect called");
         cast!(self.addr, CoreMsg::Connect(e0, e1)).unwrap()
     }
 }
@@ -68,12 +77,24 @@ impl Actor for CoreActor {
         })
     }
 
+    #[instrument(skip(self, _myself, msg, state))]
     async fn handle(
         &self,
         _myself: ActorRef<Self::Msg>,
         msg: Self::Msg,
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
+        match &msg {
+            CoreMsg::CreateEndPoint(_, _) => {
+                tracing::info!("handle CreateEndPoint");
+            },
+            CoreMsg::Send(uuid, _) => {
+                tracing::info!(uuid = ?uuid, "handle Send");
+            },
+            CoreMsg::Connect(e0, e1) => {
+                tracing::info!(e0 = ?e0, e1 = ?e1, "handle Connect");
+            },
+        }
         match msg {
             CoreMsg::CreateEndPoint(on_receive_raw, reply) => {
                 let uuid = state.next_uuid;

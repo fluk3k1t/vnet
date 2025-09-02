@@ -1,7 +1,0 @@
-"filename", "language", "Rust", "comment", "blank", "total"
-"/workspaces/vnet/src/endpoint.rs", "Rust", 0, -1, 0, -1
-"/workspaces/vnet/src/main.rs", "Rust", -24, 0, -8, -32
-"/workspaces/vnet/tests/core_tests.rs", "Rust", 28, 0, 11, 39
-"/workspaces/vnet/tests/l2_tests.rs", "Rust", 34, 0, 12, 46
-"/workspaces/vnet/tests/mod.rs", "Rust", 2, 0, 1, 3
-"Total", "-", 40, -1, 16, 55

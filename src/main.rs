@@ -4,54 +4,54 @@ use tokio::{join, time::sleep};
 use tracing::{Level, Subscriber, info_span, level_filters::LevelFilter};
 use tracing_subscriber::{
     Layer,
-    filter::{self, Targets, filter_fn},
+    filter::{self, Targets, dynamic_filter_fn, filter_fn},
     fmt::format::FmtSpan,
     layer::SubscriberExt,
     util::SubscriberInitExt,
 };
 use vnet::{
-    Core, EthernetCard, IPv4PacketType, L2Sw, NetworkInterfaceCard, NetworkInterfaceCardBuilder, l2,
+    Core, DefaultGateway, EthernetCard, IPv4PacketType, L2Sw, L3Sw, L3SwBuilder,
+    NetworkInterfaceCard, NetworkInterfaceCardBuilder, l2,
 };
 
 #[tokio::main]
 async fn main() {
-    let core = Core::spawn().await;
+    tracing_subscriber::fmt()
+        .finish()
+        .with(dynamic_filter_fn(|meta, cx| true))
+        .init();
 
-    let nic0 = NetworkInterfaceCardBuilder::new()
-        .core(core.clone())
-        .ip(ip4!("192.168.0.1"))
-        .mac(mac6!("00:00:00:00:00:01"))
-        .tag("nic0")
-        .spawn()
-        .await;
+    let core = Core::spawn().await;
 
     let nic1 = NetworkInterfaceCardBuilder::new()
         .core(core.clone())
-        .ip(ip4!("192.168.0.2"))
-        .mac(mac6!("00:00:00:00:00:02"))
+        .ip(ip4!("192.168.1.1"))
+        .mac(mac6!("00:00:00:00:00:01"))
+        .default_gateway(DefaultGateway::new(
+            ip4!("192.168.1.255"),
+            ip4!("255.255.255.0"),
+        ))
         .tag("nic1")
         .spawn()
         .await;
 
-    let l2sw = L2Sw::spawn(core.clone(), 2).await;
-
-    core.connect(nic0.uuid().await, l2sw.port(0).await.unwrap().uuid().await)
+    let nic2 = NetworkInterfaceCardBuilder::new()
+        .core(core.clone())
+        .ip(ip4!("192.168.2.1"))
+        .mac(mac6!("00:00:00:00:00:02"))
+        .default_gateway(DefaultGateway::new(
+            ip4!("192.168.2.255"),
+            ip4!("255.255.255.0"),
+        ))
+        .tag("nic2")
+        .spawn()
         .await;
 
-    core.connect(nic1.uuid().await, l2sw.port(1).await.unwrap().uuid().await)
+    let l3sw = L3SwBuilder::new(core.clone())
+        .port(ip4!("192.168.1.255"), ip4!("255.255.255.0"))
+        .port(ip4!("192.168.2.255"), ip4!("255.255.255.0"))
+        .spawn()
         .await;
 
-    tokio::spawn(async move {
-        nic0.send(
-            ip4!("192.168.0.2"),
-            IPv4PacketType::Debug("dummy".to_string()),
-        );
-    });
-
-    let j = tokio::spawn(async move {
-        let r = nic1.recv_blocking().await;
-        println!("ttttttttttttttttttttttttttt {:?}", r);
-    });
-
-    j.await;
+    // core.connect
 }
