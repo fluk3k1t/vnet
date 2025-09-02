@@ -21,7 +21,6 @@ pub struct OnReceive {
 }
 
 impl EthernetCard {
-    #[tracing::instrument(fields(test = "ethernetcard"), level = "info", skip(core, on_receive))]
     pub async fn spawn(
         core: Core,
         mac: MacAddr6,
@@ -40,24 +39,21 @@ impl EthernetCard {
         .await
         .unwrap();
         info!("EthernetCard spawned: addr={:?}", addr);
-        tracing::info!(target: "ethernetcard", "something from ethernet card");
+
         Self { addr }
     }
 
-    #[tracing::instrument(target = "ethernetcard", level = "debug", skip(self, payload))]
     pub async fn send(&self, dst: MacAddr6, payload: EthernetFrameType) {
         // debug!("EthernetCard send: dst={:?} payload={:?}", dst, payload);
         let _ = cast!(self.addr, EthernetMsg::Send(dst, payload));
     }
 
-    #[tracing::instrument(target = "ethernetcard", level = "trace", skip(self))]
     pub async fn uuid(&self) -> Uuid {
         let uuid = call!(self.addr, EthernetMsg::GetUuid).unwrap();
         trace!("EthernetCard uuid: {:?}", uuid);
         uuid
     }
 
-    #[tracing::instrument(target = "ethernetcard", level = "debug", skip(self, onr))]
     pub fn write(&self, onr: OnReceiveRaw) {
         debug!("EthernetCard write: onr={:?}", onr);
         let _ = cast!(self.addr, EthernetMsg::OnReceive(onr));
@@ -102,20 +98,15 @@ impl Actor for EthernetCardActor {
     type State = EthernetCardActorState;
     type Arguments = (Core, MacAddr6, bool, DerivedActorRef<OnReceive>);
 
-    #[tracing::instrument(target = "ethernetcard-actor", level = "info", skip_all)]
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
         (core, mac, is_promiscuous, on_receive): Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
-        tracing::info!(
-            "EthernetCardActor pre_start: mac={:?} promisc={}",
-            mac,
-            is_promiscuous
-        );
+        // ...existing code...
         let on_receive_raw: DerivedActorRef<OnReceiveRaw> = myself.get_derived();
         let ep = core.create_ep(on_receive_raw).await;
-        tracing::info!("EthernetCardActor pre_start done");
+        // ...existing code...
         Ok(EthernetCardActorState {
             mac,
             ep,
@@ -124,27 +115,26 @@ impl Actor for EthernetCardActor {
         })
     }
 
-    #[tracing::instrument(target = "ethernetcard-actor", level = "info", skip_all)]
     async fn handle(
         &self,
         _myself: ActorRef<Self::Msg>,
         msg: Self::Msg,
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
-        tracing::trace!("EthernetCardActor handle: msg={:?}", msg);
+        // ...existing code...
         match msg {
             EthernetMsg::Send(dst, payload) => {
-                tracing::debug!("EthernetCardActor: Send to {:?} payload={:?}", dst, payload);
+                // ...existing code...
                 let ef = EthernetFrame::new(state.mac, dst, payload);
                 state.ep.send(ef);
             },
             EthernetMsg::GetUuid(reply) => {
                 let uuid = state.ep.uuid().await;
-                tracing::trace!("EthernetCardActor: GetUuid -> {:?}", uuid);
+                // ...existing code...
                 let _ = reply.send(uuid);
             },
             EthernetMsg::OnReceive(onr) => {
-                tracing::debug!("EthernetCardActor: OnReceive onr={:?}", onr);
+                // ...existing code...
                 let r = cast!(
                     state.on_receive,
                     OnReceive {
@@ -152,7 +142,7 @@ impl Actor for EthernetCardActor {
                         dst: onr.dst,
                     }
                 );
-                tracing::debug!("EthernetCardActor: OnReceive result={:?}", r);
+                // ...existing code...
             },
         }
         Ok(())

@@ -12,7 +12,6 @@ use ractor::{Actor, ActorProcessingErr, ActorRef, RpcReplyPort, call, cast};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
-use tracing::debug;
 
 pub struct NetworkInterfaceCard {
     addr: ActorRef<NetworkInterfaceCardMsg>,
@@ -28,7 +27,6 @@ pub struct NetworkInterfaceCardBuilder {
 }
 
 impl NetworkInterfaceCardBuilder {
-    #[tracing::instrument(target = "l3_builder", level = "info")]
     pub fn new() -> Self {
         Self {
             core: None,
@@ -37,50 +35,39 @@ impl NetworkInterfaceCardBuilder {
             tag: None,
         }
     }
-    #[tracing::instrument(target = "l3_builder", level = "debug", skip(self, core))]
     pub fn core(mut self, core: Core) -> Self {
         self.core = Some(core);
         self
     }
-    #[tracing::instrument(target = "l3_builder", level = "debug", skip(self))]
     pub fn ip(mut self, ip: Ipv4Addr) -> Self {
         self.ip = Some(ip);
         self
     }
-    #[tracing::instrument(target = "l3_builder", level = "debug", skip(self))]
     pub fn mac(mut self, mac: MacAddr6) -> Self {
         self.mac = Some(mac);
         self
     }
-    #[tracing::instrument(target = "l3_builder", level = "debug", skip(self, tag))]
     pub fn tag<S: Into<String>>(mut self, tag: S) -> Self {
         self.tag = Some(tag.into());
         self
     }
-    #[tracing::instrument(target = "l3_builder", level = "info", skip(self))]
     pub async fn spawn(self) -> NetworkInterfaceCard {
         let core = self.core.expect("core is required");
         let ip = self.ip.expect("ip is required");
         let mac = self.mac.expect("mac is required");
         let tag = self.tag.clone();
-        tracing::info!(
-            "Spawning NetworkInterfaceCard with tag={:?}, ip={:?}, mac={:?}",
-            tag,
-            ip,
-            mac
-        );
+
         let (addr, _) =
             NetworkInterfaceCardActor::spawn(tag, NetworkInterfaceCardActor, (core, ip, mac))
                 .await
                 .unwrap();
-        tracing::info!("NetworkInterfaceCard spawned: addr={:?}", addr);
+        // ...existing code...
         NetworkInterfaceCard { addr, ip, mac }
     }
 }
 
 impl NetworkInterfaceCard {
     #[deprecated(note = "Use NetworkInterfaceCardBuilder instead")]
-    #[tracing::instrument(target = "l3", level = "info")]
     pub async fn spawn(core: Core, ip: Ipv4Addr, mac: MacAddr6) -> Self {
         NetworkInterfaceCardBuilder::new()
             .core(core)
@@ -90,28 +77,24 @@ impl NetworkInterfaceCard {
             .await
     }
 
-    #[tracing::instrument(target = "l3", level = "debug", skip(self, payload))]
     pub fn send(&self, dst: Ipv4Addr, payload: IPv4PacketType) {
-        tracing::debug!("NIC({:?}) send to {:?}: {:?}", self.mac, dst, payload);
+        // ...existing code...
         cast!(self.addr, NetworkInterfaceCardMsg::Send(dst, payload)).unwrap();
     }
 
-    #[tracing::instrument(target = "l3", level = "debug", skip(self))]
     pub async fn recv_blocking(&self) -> IPv4Packet {
-        tracing::debug!("NIC({:?}) waiting for packet", self.mac);
+        // ...existing code...
         let pkt = call!(self.addr, NetworkInterfaceCardMsg::RecvBlocking).unwrap();
-        tracing::debug!("NIC({:?}) received packet: {:?}", self.mac, pkt);
+        // ...existing code...
         pkt
     }
 
-    #[tracing::instrument(target = "l3", level = "trace", skip(self))]
     pub async fn uuid(&self) -> Uuid {
         let uuid = call!(self.addr, NetworkInterfaceCardMsg::GetUuid).unwrap();
-        tracing::trace!("NIC({:?}) uuid: {:?}", self.mac, uuid);
+        // ...existing code...
         uuid
     }
 
-    #[tracing::instrument(target = "l3", level = "trace", skip(self))]
     pub fn actor_ref(&self) -> &ActorRef<NetworkInterfaceCardMsg> {
         &self.addr
     }
@@ -127,7 +110,6 @@ pub enum NetworkInterfaceCardMsg {
 
 impl From<OnReceive> for NetworkInterfaceCardMsg {
     fn from(value: OnReceive) -> Self {
-        debug!("from {:?}", value);
         NetworkInterfaceCardMsg::OnReceive(value.payload)
     }
 }
@@ -169,11 +151,6 @@ impl Actor for NetworkInterfaceCardActor {
         myself: ActorRef<Self::Msg>,
         (core, ip, mac): Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
-        tracing::info!(
-            "NetworkInterfaceCardActor pre_start: ip={:?}, mac={:?}",
-            ip,
-            mac
-        );
         let me = myself.get_derived();
         let eth = EthernetCard::spawn(core, mac, false, me.clone()).await;
         let (rx_buffer_s, rx_buffer_r) = mpsc_unbounded();
@@ -186,7 +163,6 @@ impl Actor for NetworkInterfaceCardActor {
             rx_buffer_r: Arc::new(Mutex::new(rx_buffer_r)),
             rx_buffer_s,
         });
-        tracing::info!("NetworkInterfaceCardActor pre_start done");
         r
     }
 
@@ -196,10 +172,8 @@ impl Actor for NetworkInterfaceCardActor {
         msg: Self::Msg,
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
-        tracing::trace!("NIC actor handle: msg={:?}", msg);
         match msg {
             NetworkInterfaceCardMsg::Send(dst, payload) => {
-                tracing::debug!("NIC actor: Send to {:?} payload={:?}", dst, payload);
                 if let Some(mac) = state.arp_cache.get(&dst) {
                     state
                         .eth
@@ -215,29 +189,18 @@ impl Actor for NetworkInterfaceCardActor {
                         .or_default()
                         .push(payload.clone());
                     let req = ArpPacket::mk_request(dst, state.ip, state.mac);
-                    tracing::debug!("NIC actor: ARP request for {:?}", dst);
                     state
                         .eth
                         .send(MacAddr6::broadcast(), EthernetFrameType::Arp(req))
                         .await;
                 }
             },
-            NetworkInterfaceCardMsg::OnReceive(ef) => {
-                tracing::debug!("NIC actor: OnReceive frame={:?}", ef);
-                match ef.payload {
-                    EthernetFrameType::IPv4(packet) => {
-                        tracing::debug!("NIC actor: Received IPv4 packet: {:?}", packet);
-                        state.rx_buffer_s.send(packet).unwrap()
-                    },
-                    EthernetFrameType::Arp(arp) => {
-                        tracing::debug!("NIC actor: Received ARP packet: {:?}", arp);
-                        self.handle_arp(state, arp).await
-                    },
-                    _ => {},
-                }
+            NetworkInterfaceCardMsg::OnReceive(ef) => match ef.payload {
+                EthernetFrameType::IPv4(packet) => state.rx_buffer_s.send(packet).unwrap(),
+                EthernetFrameType::Arp(arp) => self.handle_arp(state, arp).await,
+                _ => {},
             },
             NetworkInterfaceCardMsg::RecvBlocking(reply) => {
-                tracing::debug!("NIC actor: RecvBlocking");
                 let rx = state.rx_buffer_r.clone();
                 tokio::spawn(async move {
                     let mut guard = rx.lock().await;
@@ -248,7 +211,6 @@ impl Actor for NetworkInterfaceCardActor {
             },
             NetworkInterfaceCardMsg::GetUuid(reply) => {
                 let uuid = state.eth.uuid().await;
-                tracing::trace!("NIC actor: GetUuid -> {:?}", uuid);
                 let _ = reply.send(uuid);
             },
         }
@@ -258,7 +220,6 @@ impl Actor for NetworkInterfaceCardActor {
 
 impl NetworkInterfaceCardActor {
     async fn handle_arp(&self, state: &mut NetworkInterfaceCardActorState, arp: ArpPacket) {
-        tracing::debug!("NIC actor: handle_arp called: {:?}", arp);
         let action = handle_arp(
             &arp,
             state.ip,
@@ -271,11 +232,6 @@ impl NetworkInterfaceCardActor {
         state.tx_pendings = action.updated_tx_pendings;
 
         for (dst_mac, frame_type) in action.send_frames {
-            tracing::debug!(
-                "NIC actor: handle_arp sending frame to {:?}: {:?}",
-                dst_mac,
-                frame_type
-            );
             state.eth.send(dst_mac, frame_type).await;
         }
     }
